@@ -26,7 +26,7 @@ from utils.renderer import Renderer
 from utils.net_util import to_cuda
 from utils.obj_io import save_mesh_as_ply
 from gaussians.obj_io import save_gaussians_as_ply
-
+from utils.visualize_util import colormap
 
 def safe_exists(path):
     if path is None:
@@ -55,7 +55,8 @@ class AvatarTrainer:
         self.bg_color_cuda = torch.from_numpy(np.asarray(self.bg_color)).to(torch.float32).to(config.device)
         self.loss_weight = self.opt['train']['loss_weight']
         self.finetune_color = self.opt['train']['finetune_color']
-
+        self.width = 2048
+        self.height = 1024
         print('# Parameter number of AvatarNet is %d' % (sum([p.numel() for p in self.avatar_net.parameters()])))
 
     def update_lr(self):
@@ -126,18 +127,25 @@ class AvatarTrainer:
     def forward_one_pass_pretrain(self, items):
         total_loss = 0
         batch_losses = {}
+        if self.random_bg_color:
+            self.bg_color = np.random.rand(3)
+            self.bg_color_cuda = torch.from_numpy(np.asarray(self.bg_color)).to(torch.float32).to(config.device)
+
         l1_loss = torch.nn.L1Loss()
 
         items = net_util.delete_batch_idx(items)
         pose_map = items['smpl_pos_map'][:3]
 
-        position_loss = l1_loss(self.avatar_net.get_positions(pose_map), self.avatar_net.cano_gaussian_model.get_xyz)
+        positions, rotations, scales, opacity, _ = self.avatar_net.get_gaussian_feat(pose_map)
+
+        # position_loss = l1_loss(self.avatar_net.get_positions(pose_map), self.avatar_net.cano_gaussian_model.get_xyz)
+        position_loss = l1_loss(positions, self.avatar_net.cano_gaussian_model.get_xyz)
         total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
         })
 
-        opacity, scales, rotations = self.avatar_net.get_others(pose_map)
+        # opacity, scales, rotations = self.avatar_net.get_others(pose_map)
         opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
         total_loss += opacity_loss
         batch_losses.update({
@@ -156,10 +164,50 @@ class AvatarTrainer:
             'rotation': rotation_loss.item()
         })
 
+        items['color_img'][~items['mask_img']] = self.bg_color_cuda
+        # gt_image = items['color_img'].permute(2, 0, 1)
+        # mask_img = items['mask_img'].to(torch.float32)
+        boundary_mask_img = 1. - items['boundary_mask_img'].to(torch.float32)
+
+        render_output = self.avatar_net.render(items, self.bg_color)
+
+        # mask loss with template
+        if self.loss_weight.get('mask', 0.) and 'template_mask_map' in render_output:
+            rendered_mask = render_output['mask_map'].squeeze(-1) * boundary_mask_img
+            # gt_mask = mask_img * boundary_mask_img
+            template_mask = render_output['template_mask_map'].squeeze(-1) * boundary_mask_img
+            # cv.imshow('rendered_mask', rendered_mask.detach().cpu().numpy())
+            # cv.imshow('gt_mask', gt_mask.detach().cpu().numpy())
+            # cv.waitKey(0)
+            # mask_loss = torch.abs(rendered_mask - gt_mask).mean()
+            template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
+            # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
+            # total_loss += self.loss_weight.get('mask', 0.) * mask_loss
+            total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
+            batch_losses.update({
+                # 'mask_loss': mask_loss.item(),
+                'template_mask_loss': template_mask_loss.item()
+            })
+
+        # depth loss with template
+        if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
+            rendered_depth = render_output['depth_map'].squeeze(-1)
+            template_depth = render_output['template_depth_map'].squeeze(-1)
+            template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
+            total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
+            batch_losses.update({
+                'template_depth_loss': template_depth_loss.item()
+            })
+
         total_loss.backward()
 
         self.optm.step()
+        # update gaussian uv
+        self.avatar_net.cano_gaussian_model.optimizer.step()
+
         self.optm.zero_grad()
+        self.avatar_net.cano_gaussian_model.optimizer.zero_grad(set_to_none=True)
+
 
         return total_loss, batch_losses
 
@@ -214,14 +262,27 @@ class AvatarTrainer:
         if self.loss_weight.get('mask', 0.) and 'mask_map' in render_output:
             rendered_mask = render_output['mask_map'].squeeze(-1) * boundary_mask_img
             gt_mask = mask_img * boundary_mask_img
+            template_mask = render_output['template_mask_map'].squeeze(-1) * boundary_mask_img
             # cv.imshow('rendered_mask', rendered_mask.detach().cpu().numpy())
             # cv.imshow('gt_mask', gt_mask.detach().cpu().numpy())
             # cv.waitKey(0)
             mask_loss = torch.abs(rendered_mask - gt_mask).mean()
+            template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
             # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
             total_loss += self.loss_weight.get('mask', 0.) * mask_loss
+            total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
             batch_losses.update({
-                'mask_loss': mask_loss.item()
+                'mask_loss': mask_loss.item(),
+                'template_mask_loss': template_mask_loss.item()
+            })
+
+        if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
+            rendered_depth = render_output['depth_map'].squeeze(-1)
+            template_depth = render_output['template_depth_map'].squeeze(-1)
+            template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
+            total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
+            batch_losses.update({
+                'template_depth_loss': template_depth_loss.item()
             })
 
         if self.loss_weight['lpips'] > 0.:
@@ -237,8 +298,7 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        # if self.loss_weight['offset'] > 0.:
-        if True:
+        if self.loss_weight['offset'] > 0.:
             offset_loss = torch.linalg.norm(offset, dim = -1).mean()
             total_loss += self.loss_weight['offset'] * offset_loss
             batch_losses.update({
@@ -253,15 +313,20 @@ class AvatarTrainer:
 
         # step_start.record()
         self.optm.step()
+        # update gaussian uv
+        self.avatar_net.cano_gaussian_model.optimizer.step()
+
+
         self.optm.zero_grad()
         # step_end.record()
+        self.avatar_net.cano_gaussian_model.optimizer.zero_grad(set_to_none=True)
 
         # torch.cuda.synchronize()
         # print(f'Forward costs: {forward_start.elapsed_time(forward_end) / 1000.}, ',
         #       f'Backward costs: {backward_start.elapsed_time(backward_end) / 1000.}, ',
         #       f'Step costs: {step_start.elapsed_time(step_end) / 1000.}')
 
-        return total_loss, batch_losses
+        return total_loss, batch_losses, render_output
 
     def pretrain(self):
         dataset_module = self.opt['train'].get('dataset', 'MvRgbDatasetAvatarReX')
@@ -316,7 +381,11 @@ class AvatarTrainer:
                         fp.write(log_info + '\n')
 
                 if self.iter_idx % 200 == 0 and self.iter_idx != 0:
-                    self.mini_test(pretraining = True)
+                    if self.iter_idx % (10 * self.opt['train']['eval_interval']) == 0:
+                        eval_cano_pts = True
+                    else:
+                        eval_cano_pts = False
+                    self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts)
 
                 if self.iter_idx == 5000:
                     model_folder = self.opt['train']['net_ckpt_dir'] + '/pretrained'
@@ -384,51 +453,68 @@ class AvatarTrainer:
                 items = to_cuda(items)
 
                 # one_step_start.record()
-                total_loss, batch_losses = self.forward_one_pass(items)
+                total_loss, batch_losses, render_output = self.forward_one_pass(items)
                 # one_step_end.record()
                 # torch.cuda.synchronize()
                 # print('One step costs %f secs' % (one_step_start.elapsed_time(one_step_end) / 1000.))
 
-                # record batch loss
-                for key, loss in batch_losses.items():
-                    if key in smooth_losses:
-                        smooth_losses[key] += loss
-                    else:
-                        smooth_losses[key] = loss
-                smooth_count += 1
+                # TODO no densification to check
+                visibility_filter = render_output["visibility_filter"]
+                radii = render_output["radii"]
+                viewspace_points = render_output["viewspace_points"]
+                with torch.no_grad():
+                #     # Densification
+                #     if self.iter_idx < self.opt["train"]["densify_until_iter"]:
+                #         # Keep track of max radii in image-space for pruning
+                #         self.avatar_net.cano_gaussian_model.max_radii2D[visibility_filter] = torch.max(self.avatar_net.cano_gaussian_model.max_radii2D[visibility_filter],
+                #                                                                                        radii[visibility_filter])
+                #         self.avatar_net.cano_gaussian_model.add_densification_stats(viewspace_points, visibility_filter)
+                #
+                #         if self.iter_idx > self.opt["train"]["densify_from_iter"] and self.iter_idx % self.opt["train"]["densification_interval"] == 0:
+                #             size_threshold = 20
+                #             self.avatar_net.cano_gaussian_model.densify_and_prune(self.opt["train"]["densify_grad_threshold"], self.opt["train"]["opacity_threshold"], self.opt["train"]["camera_extent"], size_threshold)
 
-                if self.iter_idx % smooth_interval == 0:
-                    log_info = 'epoch %d, batch %d, iter %d, lr %e, ' % (epoch_idx, batch_idx, self.iter_idx, lr)
-                    for key in smooth_losses.keys():
-                        smooth_losses[key] /= smooth_count
-                        writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
-                        log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
-                        smooth_losses[key] = 0.
-                    smooth_count = 0
-                    print(log_info)
-                    with open(os.path.join(log_dir, 'loss.txt'), 'a') as fp:
-                        fp.write(log_info + '\n')
-                    torch.cuda.empty_cache()
+                    # record batch loss
+                    for key, loss in batch_losses.items():
+                        if key in smooth_losses:
+                            smooth_losses[key] += loss
+                        else:
+                            smooth_losses[key] = loss
+                    smooth_count += 1
 
-                if self.iter_idx % self.opt['train']['eval_interval'] == 0 and self.iter_idx != 0:
-                    if self.iter_idx % (10 * self.opt['train']['eval_interval']) == 0:
-                        eval_cano_pts = True
-                    else:
-                        eval_cano_pts = False
-                    self.mini_test(eval_cano_pts = eval_cano_pts)
+                    if self.iter_idx % smooth_interval == 0:
+                        log_info = 'epoch %d, batch %d, iter %d, lr %e, ' % (epoch_idx, batch_idx, self.iter_idx, lr)
+                        for key in smooth_losses.keys():
+                            smooth_losses[key] /= smooth_count
+                            writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
+                            log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
+                            smooth_losses[key] = 0.
+                        log_info += f'pts_num: {visibility_filter.shape[0]}, '
+                        smooth_count = 0
+                        print(log_info)
+                        with open(os.path.join(log_dir, 'loss.txt'), 'a') as fp:
+                            fp.write(log_info + '\n')
+                        torch.cuda.empty_cache()
 
-                if self.iter_idx % self.opt['train']['ckpt_interval']['batch'] == 0 and self.iter_idx != 0:
-                    for folder in glob.glob(self.opt['train']['net_ckpt_dir'] + '/batch_*'):
-                        shutil.rmtree(folder)
-                    model_folder = self.opt['train']['net_ckpt_dir'] + '/batch_%d' % self.iter_idx
-                    os.makedirs(model_folder, exist_ok = True)
-                    self.save_ckpt(model_folder, save_optm = True)
+                    if self.iter_idx % self.opt['train']['eval_interval'] == 0 and self.iter_idx != 0:
+                        if self.iter_idx % (10 * self.opt['train']['eval_interval']) == 0:
+                            eval_cano_pts = True
+                        else:
+                            eval_cano_pts = False
+                        self.mini_test(eval_cano_pts = eval_cano_pts)
 
-                if self.iter_idx == self.iter_num:
-                    print('# Training is done.')
-                    return
+                    if self.iter_idx % self.opt['train']['ckpt_interval']['batch'] == 0 and self.iter_idx != 0:
+                        for folder in glob.glob(self.opt['train']['net_ckpt_dir'] + '/batch_*'):
+                            shutil.rmtree(folder)
+                        model_folder = self.opt['train']['net_ckpt_dir'] + '/batch_%d' % self.iter_idx
+                        os.makedirs(model_folder, exist_ok = True)
+                        self.save_ckpt(model_folder, save_optm = True)
 
-                self.iter_idx += 1
+                    if self.iter_idx == self.iter_num:
+                        print('# Training is done.')
+                        return
+
+                    self.iter_idx += 1
 
             """ End of epoch """
             if epoch_idx % self.opt['train']['ckpt_interval']['epoch'] == 0 and epoch_idx != 0:
@@ -481,7 +567,7 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.init_points + gs_render['offset']).cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
 
         # training data
         pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
@@ -518,8 +604,28 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.init_points + gs_render['offset']).cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
 
+        # export UV map
+        uv = self.avatar_net.cano_gaussian_model.get_uv
+        pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
+        pixel_coords[:, 0] = torch.clamp(pixel_coords[:, 0], min=0, max=self.height - 1)
+        pixel_coords[:, 1] = torch.clamp(pixel_coords[:, 1], min=0, max=self.width - 1)
+        uv_map = torch.zeros((self.height, self.width, 3))
+        colors = gs_render["colors"]
+        for (x, y), color in zip(pixel_coords, colors):
+            uv_map[x, y] = color
+        uv_map.clip_(0., 1.)
+        uv_map = (uv_map.cpu().numpy() * 255).astype(np.uint8)
+        os.makedirs(output_dir + '/uv_map', exist_ok=True)
+        cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
+
+        os.makedirs(output_dir + '/template', exist_ok=True)
+        template_mask_map = (gs_render["template_mask_map"].cpu().numpy() * 255)
+
+        template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
+        cv.imwrite(output_dir + '/template/template_mask_iter_%d.jpg' % self.iter_idx, template_mask_map)
+        cv.imwrite(output_dir + '/template/template_depth_iter_%d.jpg' % self.iter_idx, template_depth_map)
         self.avatar_net.train()
 
     @torch.no_grad()
@@ -779,6 +885,7 @@ class AvatarTrainer:
             'epoch_idx': self.epoch_idx,
             'iter_idx': self.iter_idx,
             'avatar_net': self.avatar_net.state_dict(),
+            'gaussian': self.avatar_net.cano_gaussian_model.capture(),
         }
         print('Saving networks to ', path + '/net.pt')
         torch.save(net_dict, path + '/net.pt')
@@ -797,6 +904,10 @@ class AvatarTrainer:
             self.avatar_net.load_state_dict(net_dict['avatar_net'])
         else:
             print('[WARNING] Cannot find "avatar_net" from the network checkpoint!')
+        if 'gaussian' in net_dict:
+            self.avatar_net.cano_gaussian_model.restore(net_dict['gaussian'], self.opt["model"]["gaussian"])
+        else:
+            print('[WARNING] Cannot find "gaussian" from the network checkpoint!')
         epoch_idx = net_dict['epoch_idx']
         iter_idx = net_dict['iter_idx']
 

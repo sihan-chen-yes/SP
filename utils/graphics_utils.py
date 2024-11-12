@@ -83,3 +83,24 @@ def fov2focal(fov, pixels):
 
 def focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
+
+def index_to_uv(index, width=2048, height=1024):
+    # index is a tensor of shape (N, 2)
+    # Convert index to u and v in the range [0, 1]
+    uv_coords = index.clone().float()
+    uv_coords[:, 0] = uv_coords[:, 0] / (height - 1)  # Convert x_index to u
+    uv_coords[:, 1] = uv_coords[:, 1] / (width - 1)  # Convert y_index to v
+    return uv_coords
+
+def uv_to_index(uv, width=2048, height=1024):
+    # uv is a tensor of shape (N, 2) where each row is a (u, v) coordinate in [0, 1]
+    # Convert u and v back to integer indices in the range [0, width-1] and [0, height-1]
+
+    index = torch.zeros_like(uv)
+    # Convert u to x_index by scaling by width and rounding
+    index[:, 0] = (uv[:, 0] * (height - 1)).round()
+
+    # Convert v to y_index by scaling by height and rounding
+    index[:, 1] = (uv[:, 1] * (width - 1)).round()
+
+    return index

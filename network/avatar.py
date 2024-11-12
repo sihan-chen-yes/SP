@@ -11,7 +11,11 @@ import config
 from network.styleunet.dual_styleunet import DualStyleUNet
 from gaussians.gaussian_model import GaussianModel
 from gaussians.gaussian_renderer import render3
-
+from utils.network_utils import VanillaCondMLP
+from utils.graphics_utils import uv_to_index
+import trimesh
+from pytorch3d.ops import knn_points
+from utils.general_utils import inverse_sigmoid
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
@@ -29,8 +33,10 @@ class AvatarNet(nn.Module):
         self.cano_smpl_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
         self.init_points = self.cano_smpl_map[self.cano_smpl_mask]
         self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/init_pts_lbs.npy')).to(torch.float32).to(config.device)
-        self.cano_gaussian_model.create_from_pcd(self.init_points, torch.rand_like(self.init_points), spatial_lr_scale = 2.5)
 
+        self.cano_gaussian_model.create_from_pcd(self.init_points, torch.rand_like(self.init_points), spatial_lr_scale = 2.5, cano_smpl_mask=self.cano_smpl_mask)
+
+        self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 3, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.position_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 3, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 8, out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -38,6 +44,15 @@ class AvatarNet(nn.Module):
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.position_style = torch.ones([1, self.position_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.position_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
+
+        # TODO separate features encoding?
+        self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
+        self.feature_style = torch.ones([1, self.feature_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.feature_net.style_dim)
+        # position + rotation + scaling + opacity + color
+        self.mlp_decoder = VanillaCondMLP(opt["feat_dim"], 0, 3 + 4 + 3 + 1 + 3, opt["mlp"])
+
+        self.template_points = trimesh.load(config.opt['train']['data']['data_dir'] + '/template_raw.ply', process = False)
+
 
         if self.with_viewdirs:
             cano_nml_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/cano_smpl_nml_map.exr', cv.IMREAD_UNCHANGED)
@@ -82,7 +97,12 @@ class AvatarNet(nn.Module):
         # exit(1)
 
     def transform_cano2live(self, gaussian_vals, items):
+        # smplx transformation
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
+        # find the nearest vertex
+        knn_ret = pytorch3d.ops.knn_points(gaussian_vals['positions'].unsqueeze(0), self.init_points.unsqueeze(0))
+        p_idx = knn_ret.idx.squeeze()
+        pt_mats = pt_mats[p_idx, :]
         gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], gaussian_vals['positions']) + pt_mats[..., :3, 3]
         rot_mats = pytorch3d.transforms.quaternion_to_matrix(gaussian_vals['rotations'])
         rot_mats = torch.einsum('nxy,nyz->nxz', pt_mats[..., :3, :3], rot_mats)
@@ -123,7 +143,70 @@ class AvatarNet(nn.Module):
         colors = color_map[self.cano_smpl_mask]
         return colors, color_map
 
+    def get_feat_map(self, pose_map):
+        feat_map, _ = self.feature_net([self.feature_style], pose_map[None], randomize_noise = False)
+        # TODO view direction input?
+        # feat dim?
+        front_feat_map, back_feat_map = torch.split(feat_map, [self.opt["feat_dim"], self.opt["feat_dim"]], 1)
+        feat_map = torch.cat([front_feat_map, back_feat_map], 3)[0].permute(1, 2, 0)
+        return feat_map
+
+    def get_interpolated_feat(self, pose_map):
+        # [1024, 2048, 64]
+        feat_map = self.get_feat_map(pose_map)
+        uv = self.cano_gaussian_model.get_uv
+        width = 2048
+        height = 1024
+        x = uv[:, 0] * (height - 1)
+        y = uv[:, 1] * (width - 1)
+
+        # Find the four surrounding points for bi-linear interpolation
+        x0 = torch.floor(x).long()
+        x1 = torch.clamp(x0 + 1, 0, width - 1)
+        y0 = torch.floor(y).long()
+        y1 = torch.clamp(y0 + 1, 0, height - 1)
+
+        # Compute interpolation weights based on fractional parts
+        # gap is 1(denominator 1)
+        wx = x - x0.float()
+        wy = y - y0.float()
+        w00 = (1 - wx) * (1 - wy)
+        w10 = wx * (1 - wy)
+        w01 = (1 - wx) * wy
+        w11 = wx * wy
+
+        # Gather features at the four corners
+        f00 = feat_map[x0, y0]  # Top-left
+        f10 = feat_map[x1, y0]  # Bottom-left
+        f01 = feat_map[x0, y1]  # Top-right
+        f11 = feat_map[x1, y1]  # Bottom-right
+
+        # Compute the interpolated features
+        interpolated_feat = (w00[:, None] * f00 +
+                             w01[:, None] * f01 +
+                             w10[:, None] * f10 +
+                             w11[:, None] * f11)
+        return interpolated_feat
+
+    def get_gaussian_feat(self, pose_map):
+        feat = self.get_interpolated_feat(pose_map)
+        # position + rotation + scaling + opacity + color
+        output = self.mlp_decoder(feat)
+
+        delta_position, delta_rotation, delta_scales, delta_opacity, colors = torch.split(output, [3, 4, 3, 1, 3], 1)
+
+        delta_position = 0.05 * delta_position
+        positions = delta_position + self.cano_gaussian_model.get_xyz
+        rotations = self.cano_gaussian_model.rotation_activation(delta_rotation + self.cano_gaussian_model.get_rotation_raw)
+        scales = self.cano_gaussian_model.scaling_activation(delta_scales + self.cano_gaussian_model.get_scaling_raw)
+        opacity = self.cano_gaussian_model.opacity_activation(delta_opacity + self.cano_gaussian_model.get_opacity_raw)
+        #TODO color activation?
+        colors = self.cano_gaussian_model.color_activation(colors)
+
+        return positions, rotations, scales, opacity, colors
+
     def get_viewdir_feat(self, items):
+        # TODO
         with torch.no_grad():
             pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
             live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.init_points) + pt_mats[..., :3, 3]
@@ -148,7 +231,7 @@ class AvatarNet(nn.Module):
 
     def get_pose_map(self, items):
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats_woRoot'])
-        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.init_points) + pt_mats[..., :3, 3]
+        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_gaussian_model.get_init_pts()) + pt_mats[..., :3, 3]
         live_pos_map = torch.zeros_like(self.cano_smpl_map)
         live_pos_map[self.cano_smpl_mask] = live_pts
         live_pos_map = F.interpolate(live_pos_map.permute(2, 0, 1)[None], None, [0.5, 0.5], mode = 'nearest')[0]
@@ -158,7 +241,7 @@ class AvatarNet(nn.Module):
         })
         return live_pos_map
 
-    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False):
+    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
         """
         Note that no batch index in items.
         """
@@ -170,19 +253,23 @@ class AvatarNet(nn.Module):
         if use_vae:
             pose_map = items['smpl_pos_map_vae'][:3]
 
-        cano_pts, pos_map = self.get_positions(pose_map, return_map = True)
-        opacity, scales, rotations = self.get_others(pose_map)
+        cano_pts, rotations, scales, opacity, colors = self.get_gaussian_feat(pose_map)
+
+        # cano_pts, pos_map = self.get_positions(pose_map, return_map = True)
+        # opacity, scales, rotations = self.get_others(pose_map)
         # if not self.training:
         # scales = torch.clip(scales, 0., 0.03)
         if self.with_viewdirs:
             front_viewdirs, back_viewdirs = self.get_viewdir_feat(items)
         else:
             front_viewdirs, back_viewdirs = None, None
-        colors, color_map = self.get_colors(pose_map, front_viewdirs, back_viewdirs)
+        # colors, color_map = self.get_colors(pose_map, front_viewdirs, back_viewdirs)
+
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
             import utils.geo_util as geo_util
+            #TODO meanning?
             cano_xyz = self.init_points
             wl = torch.sigmoid(2.5 * (geo_util.normalize_vert_bbox(items['left_cano_mano_v'], attris = cano_xyz, dim = 0, per_axis = True)[..., 0:1] + 2.0))
             wr = torch.sigmoid(-2.5 * (geo_util.normalize_vert_bbox(items['right_cano_mano_v'], attris = cano_xyz, dim = 0, per_axis = True)[..., 0:1] - 2.0))
@@ -208,9 +295,10 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        nonrigid_offset = gaussian_vals['positions'] - self.init_points
+        nonrigid_offset = gaussian_vals['positions'] - self.init_points[self.cano_gaussian_model.get_gs_index()]
 
-        gaussian_vals = self.transform_cano2live(gaussian_vals, items)
+        if not pretrain:
+            gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
         render_ret = render3(
             gaussian_vals,
@@ -222,18 +310,62 @@ class AvatarNet(nn.Module):
         )
         rgb_map = render_ret['render'].permute(1, 2, 0)
         mask_map = render_ret['mask'].permute(1, 2, 0)
+        depth_map = render_ret['depth'].permute(1, 2, 0)
+        viewspace_points = render_ret['viewspace_points']
+        visibility_filter = render_ret['visibility_filter']
+        radii = render_ret['radii']
+
+        # render template to supervise
+        template_positions = torch.tensor(self.template_points.vertices, dtype=torch.float, device="cuda")
+        dist2 = torch.clamp_min(knn_points(template_positions[None], template_positions[None], K = 4)[0][0, :, 1:].mean(-1), 0.0000001)
+        template_scales = torch.sqrt(dist2)[...,None].repeat(1, 3)
+        # quaternion
+        template_rotations = torch.zeros((template_positions.shape[0], 4), dtype=torch.float, device="cuda")
+        template_rotations[:, 0] = 1
+        template_gaussian_vals = {
+            'positions': template_positions,
+            'opacity': torch.ones((template_positions.shape[0], 1), dtype=torch.float, device="cuda"),
+            'scales': template_scales,
+            'rotations': template_rotations,
+            'colors': torch.ones((template_positions.shape[0], 3), dtype=torch.float, device="cuda"),
+            'max_sh_degree': self.max_sh_degree
+        }
+
+        if not pretrain:
+            template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
+
+        template_render_ret = render3(
+            template_gaussian_vals,
+            bg_color,
+            items['extr'],
+            items['intr'],
+            items['img_w'],
+            items['img_h']
+        )
+
+        template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
+        template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
             'offset': nonrigid_offset,
-            'pos_map': pos_map
+
+            'depth_map': depth_map,
+            'viewspace_points': viewspace_points,
+            'visibility_filter': visibility_filter,
+            'radii': radii,
+
+            "colors": colors,
+            # 'pos_map': pos_map
+            'template_mask_map': template_mask_map,
+            'template_depth_map': template_depth_map,
         }
 
-        if not self.training:
-            ret.update({
-                'cano_tex_map': color_map,
-                'posed_gaussians': gaussian_vals
-            })
+        # if not self.training:
+        #     ret.update({
+        #         'cano_tex_map': color_map,
+        #         'posed_gaussians': gaussian_vals
+        #     })
 
         return ret

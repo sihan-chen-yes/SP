@@ -197,3 +197,19 @@ def paper_visualize_gaussian_map(gaussian_map):
     valid_gaussians = gaussian_map[mask]
     u, s, v = np.linalg.svd(valid_gaussians.transpose())
     print(u, s, v)
+
+def colormap(img, cmap='jet'):
+    import matplotlib.pyplot as plt
+    W, H = img.shape[:2]
+    dpi = 300
+    fig, ax = plt.subplots(1, figsize=(H/dpi, W/dpi), dpi=dpi)
+    im = ax.imshow(img, cmap=cmap)
+    ax.set_axis_off()
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.canvas.draw()
+    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    img = torch.from_numpy(data.copy()).float()
+    plt.close()
+    return img

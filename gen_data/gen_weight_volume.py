@@ -112,7 +112,7 @@ def calc_cano_weight_volume(data_dir, gender = 'neutral'):
     )
 
     compute_lbs_grad(cano_smpl_trimesh, smpl_model.lbs_weights.cpu().numpy())
-    solve(smpl_model.lbs_weights.shape[-1], ".\\bins\\PointInterpolant.exe")
+    solve(smpl_model.lbs_weights.shape[-1], "./bins/PointInterpolant")
 
     ### NOTE concatenate all grids
     fn_list = sorted(list(glob.glob(os.path.join(tmp_dir, 'grid_*.grd'))))

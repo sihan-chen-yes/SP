@@ -19,15 +19,16 @@ from pytorch3d.ops import knn_points
 from utils.sh_utils import RGB2SH
 # from simple_knn._C import distCUDA2
 from utils.general_utils import strip_symmetric, build_scaling_rotation
-
+from utils.graphics_utils import index_to_uv
 
 class OptimizationParams:
     def __init__(self):
-        self.iterations = 30_000
+        self.iterations = 200_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
-        self.position_lr_max_steps = 30_000
+        # TODO
+        self.position_lr_max_steps = 200_000
         self.feature_lr = 0.0025
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
@@ -37,7 +38,7 @@ class OptimizationParams:
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
-        self.densify_until_iter = 15_000
+        self.densify_until_iter = 200_000
         self.densify_grad_threshold = 0.0002
 
 
@@ -58,6 +59,7 @@ class GaussianModel:
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
+        self.color_activation = torch.sigmoid
         self.rotation_activation = torch.nn.functional.normalize
 
 
@@ -78,10 +80,17 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
+        self.init_pts = torch.empty(0)
+        self.pts_index = torch.empty(0)
+
+        self.width = 2048
+        self.height = 1024
+
     def capture(self):
         return (
             self.active_sh_degree,
             self._xyz,
+            self._uv,
             self._features_dc,
             self._features_rest,
             self._scaling,
@@ -96,7 +105,8 @@ class GaussianModel:
     
     def restore(self, model_args, training_args):
         (self.active_sh_degree, 
-        self._xyz, 
+        self._xyz,
+        self._uv,
         self._features_dc, 
         self._features_rest,
         self._scaling, 
@@ -131,6 +141,10 @@ class GaussianModel:
     @property
     def get_xyz(self):
         return self._xyz
+
+    @property
+    def get_uv(self):
+        return self._uv
     
     @property
     def get_features(self):
@@ -145,7 +159,13 @@ class GaussianModel:
     @property
     def get_opacity_raw(self):
         return self._opacity
-    
+
+    def get_init_pts(self):
+        return self.init_pts[self.get_gs_index()]
+
+    def get_gs_index(self):
+        return self.pts_index.squeeze()
+
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
@@ -153,12 +173,14 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, points, colors, spatial_lr_scale: float):
+    def create_from_pcd(self, points, colors, spatial_lr_scale: float, cano_smpl_mask):
         self.spatial_lr_scale = spatial_lr_scale
         if not isinstance(points, torch.Tensor):
             points = torch.tensor(np.asarray(points))
         if not isinstance(colors, torch.Tensor):
             points = torch.tensor(np.asarray(colors))
+        self.init_pts = points
+        self.pts_index = torch.arange(self.init_pts.shape[0], device="cuda").unsqueeze(1)
         fused_point_cloud = points.float().cuda()
         fused_color = RGB2SH(colors.float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
@@ -182,29 +204,39 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
+        init_indices = torch.nonzero(cano_smpl_mask)
+        # uv coordinate
+        uv = index_to_uv(init_indices, width=2048, height=1024)
+        self._uv = nn.Parameter(uv.requires_grad_(True))
+
+
     def training_setup(self, training_args):
-        self.percent_dense = training_args.percent_dense
+        self.percent_dense = training_args["percent_dense"]
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         l = [
-            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
-            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
-            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            {'params': [self._xyz], 'lr': training_args["position_lr_init"] * self.spatial_lr_scale, "name": "xyz"},
+            # TODO lr?
+            {'params': [self._uv], 'lr': training_args["position_lr_init"] * training_args["uv_spatial_lr"], "name": "uv"},
+            {'params': [self._features_dc], 'lr': training_args["feature_lr"], "name": "f_dc"},
+            {'params': [self._features_rest], 'lr': training_args["feature_lr"] / 20.0, "name": "f_rest"},
+            {'params': [self._opacity], 'lr': training_args["opacity_lr"], "name": "opacity"},
+            {'params': [self._scaling], 'lr': training_args["scaling_lr"], "name": "scaling"},
+            {'params': [self._rotation], 'lr': training_args["rotation_lr"], "name": "rotation"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
-                                                    lr_delay_mult=training_args.position_lr_delay_mult,
-                                                    max_steps=training_args.position_lr_max_steps)
+        # TODO
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args["position_lr_init"]*self.spatial_lr_scale,
+                                                    lr_final=training_args["position_lr_final"]*self.spatial_lr_scale,
+                                                    lr_delay_mult=training_args["position_lr_delay_mult"],
+                                                    max_steps=training_args["position_lr_max_steps"])
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:
+            # TODO uv
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
@@ -222,12 +254,14 @@ class GaussianModel:
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
+        l += ['u', 'v']
         return l
 
     def save_ply(self, path):
         os.makedirs(os.path.dirname(path), exist_ok = True)
 
         xyz = self._xyz.detach().cpu().numpy()
+        uv = self._uv.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
@@ -238,15 +272,15 @@ class GaussianModel:
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, uv), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-    def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-        self._opacity = optimizable_tensors["opacity"]
+    # def reset_opacity(self):
+    #     opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+    #     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+    #     self._opacity = optimizable_tensors["opacity"]
 
     def load_ply(self, path):
         plydata = PlyData.read(path)
@@ -254,6 +288,8 @@ class GaussianModel:
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
+        uv = np.stack((np.asarray(plydata.elements[0]["u"]),
+                        np.asarray(plydata.elements[0]["v"])), axis=1)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
@@ -283,6 +319,7 @@ class GaussianModel:
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._uv = nn.Parameter(torch.tensor(uv, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -329,6 +366,7 @@ class GaussianModel:
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
+        self._uv = optimizable_tensors["uv"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
@@ -339,6 +377,8 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+
+        self.pts_index = self.pts_index[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -362,8 +402,9 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_uv, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_init_pts_index):
         d = {"xyz": new_xyz,
+        "uv": new_uv,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
         "opacity": new_opacities,
@@ -372,6 +413,7 @@ class GaussianModel:
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
+        self._uv = optimizable_tensors["uv"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
@@ -381,6 +423,8 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+        self.pts_index = torch.cat((self.pts_index, new_init_pts_index), dim=0)
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -396,13 +440,19 @@ class GaussianModel:
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
+        # [0,1] for jittering
+        uv_random = torch.rand((n_init_points, 2), device="cuda")
+        uv_random = uv_random * torch.tensor([1 / self.height, 1 / self.width], device="cuda")
+        new_uv = (uv_random + self.get_uv)[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
+        new_init_pts_index = self.pts_index[selected_pts_mask].repeat(N, 1)
+
+        self.densification_postfix(new_xyz, new_uv, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_init_pts_index)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -414,13 +464,16 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
         new_xyz = self._xyz[selected_pts_mask]
+        new_uv = self._uv[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+        new_init_pts_index = self.pts_index[selected_pts_mask]
+
+        self.densification_postfix(new_xyz, new_uv, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_init_pts_index)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom

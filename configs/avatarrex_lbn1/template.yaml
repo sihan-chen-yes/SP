@@ -3,7 +3,7 @@ train:
   dataset: MvRgbDatasetAvatarReX
   data:
     subject_name: avatarrex_lbn1
-    data_dir: Z:/Data/MultiviewRGB/avatarrex/lbn1
+    data_dir: ../avatarrex/lbn1
     frame_range: &id001
     - 1033
     - 1034

@@ -3,7 +3,7 @@ train:
   dataset: MvRgbDatasetAvatarReX
   data:
     subject_name: avatarrex_lbn1
-    data_dir: ./Data/MultiviewRGB/avatarrex/lbn1
+    data_dir: ../avatarrex/lbn1
     frame_range: &id001
     - 0
     - 1901
@@ -24,15 +24,26 @@ train:
   loss_weight:
     l1: 1.0
     lpips: 0.1
+    mask: 0.1
+    depth: 0.1
     offset: 0.005
   finetune_color: false
   batch_size: 1
   num_workers: 8
   random_bg_color: true
+
+  # densification configs
+  densification_interval: 100
+  densify_from_iter: 0
+  densify_until_iter: 200_000
+  densify_grad_threshold: 0.0002
+  opacity_threshold: 0.05
+  camera_extent: 3.469298553466797
+
 test:
   dataset: MvRgbDatasetAvatarReX
   data:
-    data_dir: Z:/Data/MultiviewRGB/avatarrex/lbn1
+    data_dir: ../avatarrex/lbn1
     frame_range: *id001
     subject_name: avatarrex_lbn1
   pose_data:
@@ -57,3 +68,26 @@ test:
 model:
   with_viewdirs: true
   random_style: false
+
+  mlp:
+    n_neurons: 64
+    n_hidden_layers: 2
+    skip_in: []
+    cond_in: []
+    multires: 0
+
+  feat_dim: 32
+
+  gaussian:
+    position_lr_init: 0.00016
+    position_lr_final: 0.0000016
+    position_lr_delay_mult: 0.01
+    #TODO
+    position_lr_max_steps: 200_000
+    feature_lr: 0.0025
+    opacity_lr: 0.05
+    scaling_lr: 0.005
+    rotation_lr: 0.001
+    percent_dense: 0.01
+    # TODO
+    uv_spatial_lr: 0.1
