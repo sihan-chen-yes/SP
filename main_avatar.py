@@ -232,7 +232,7 @@ class AvatarTrainer:
         # forward_start.record()
         render_output = self.avatar_net.render(items, self.bg_color)
         image = render_output['rgb_map'].permute(2, 0, 1)
-        offset = render_output['offset']
+        # offset = render_output['offset']
 
         # mask image & set bg color
         items['color_img'][~items['mask_img']] = self.bg_color_cuda
@@ -260,23 +260,23 @@ class AvatarTrainer:
             # cv.imshow('gt_mask', gt_mask.detach().cpu().numpy())
             # cv.waitKey(0)
             mask_loss = torch.abs(rendered_mask - gt_mask).mean()
-            template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
+            # template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
             # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
             total_loss += self.loss_weight.get('mask', 0.) * mask_loss
-            total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
+            # total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
             batch_losses.update({
                 'mask_loss': mask_loss.item(),
-                'template_mask_loss': template_mask_loss.item()
+                # 'template_mask_loss': template_mask_loss.item()
             })
 
-        if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
-            rendered_depth = render_output['depth_map'].squeeze(-1)
-            template_depth = render_output['template_depth_map'].squeeze(-1)
-            template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
-            total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
-            batch_losses.update({
-                'template_depth_loss': template_depth_loss.item()
-            })
+        # if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
+        #     rendered_depth = render_output['depth_map'].squeeze(-1)
+        #     template_depth = render_output['template_depth_map'].squeeze(-1)
+        #     template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
+        #     total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
+        #     batch_losses.update({
+        #         'template_depth_loss': template_depth_loss.item()
+        #     })
 
         if self.loss_weight['lpips'] > 0.:
             # crop images
@@ -291,12 +291,12 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        if self.loss_weight['offset'] > 0.:
-            offset_loss = torch.linalg.norm(offset, dim = -1).mean()
-            total_loss += self.loss_weight['offset'] * offset_loss
-            batch_losses.update({
-                'offset_loss': offset_loss.item()
-            })
+        # if self.loss_weight['offset'] > 0.:
+        #     offset_loss = torch.linalg.norm(offset, dim = -1).mean()
+        #     total_loss += self.loss_weight['offset'] * offset_loss
+        #     batch_losses.update({
+        #         'offset_loss': offset_loss.item()
+        #     })
 
         # forward_end.record()
 

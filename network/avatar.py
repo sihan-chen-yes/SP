@@ -289,7 +289,7 @@ class AvatarNet(nn.Module):
 
         else:
             # update cano gs
-            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask >= 0.5], torch.rand_like(self.cano_smpl_map[mask >= 0.5]), spatial_lr_scale=2.5, cano_smpl_mask=mask)
+            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask >= 0.5], torch.rand_like(self.cano_smpl_map[mask >= 0.5]), spatial_lr_scale=2.5)
             cano_pts, pos_map = self.get_positions(pose_map, mask >= 0.5, return_map = True)
             opacity, scales, rotations = self.get_others(pose_map, mask >= 0.5)
             colors, color_map = self.get_colors(pose_map, mask >= 0.5, front_viewdirs, back_viewdirs)
