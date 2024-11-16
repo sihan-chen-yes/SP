@@ -387,7 +387,8 @@ class AvatarNet(nn.Module):
             'pos_map': pos_map,
             'template_mask_map': template_mask_map,
             'template_depth_map': template_depth_map,
-            "mask": mask
+            "mask": mask,
+            "cano_pts": cano_pts,
         }
 
         # if not self.training:

@@ -123,7 +123,7 @@ class AvatarTrainer:
             normalize = True
         ).mean()
         return lpips_loss
-
+    #TODO
     def forward_one_pass_pretrain(self, items):
         total_loss = 0
         batch_losses = {}
@@ -163,7 +163,7 @@ class AvatarTrainer:
 
         # change T/F to 1/0
         mask = self.avatar_net.get_mask(pose_map)
-        mask_loss = l1_loss(mask, self.avatar_net.cano_template_mask.float())
+        mask_loss = F.binary_cross_entropy(mask, self.avatar_net.cano_smpl_mask.float())
         total_loss += mask_loss
         batch_losses.update({
             'UV_mask_loss': mask_loss.item()
@@ -555,7 +555,7 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
 
         # training data
         pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
@@ -592,7 +592,7 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
 
 
         # export mask
