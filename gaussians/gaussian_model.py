@@ -90,7 +90,7 @@ class GaussianModel:
         return (
             self.active_sh_degree,
             self._xyz,
-            self._uv,
+            # self._uv,
             self._features_dc,
             self._features_rest,
             self._scaling,
@@ -106,7 +106,7 @@ class GaussianModel:
     def restore(self, model_args, training_args):
         (self.active_sh_degree, 
         self._xyz,
-        self._uv,
+        # self._uv,
         self._features_dc, 
         self._features_rest,
         self._scaling, 
@@ -142,9 +142,9 @@ class GaussianModel:
     def get_xyz(self):
         return self._xyz
 
-    @property
-    def get_uv(self):
-        return self._uv
+    # @property
+    # def get_uv(self):
+    #     return self._uv
     
     @property
     def get_features(self):
@@ -173,7 +173,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, points, colors, spatial_lr_scale: float, cano_smpl_mask):
+    def create_from_pcd(self, points, colors, spatial_lr_scale: float):
         self.spatial_lr_scale = spatial_lr_scale
         if not isinstance(points, torch.Tensor):
             points = torch.tensor(np.asarray(points))
@@ -204,10 +204,10 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        init_indices = torch.nonzero(cano_smpl_mask)
+        # init_indices = torch.nonzero(cano_smpl_mask)
         # uv coordinate
-        uv = index_to_uv(init_indices, width=2048, height=1024)
-        self._uv = nn.Parameter(uv.requires_grad_(True))
+        # uv = index_to_uv(init_indices, width=2048, height=1024)
+        # self._uv = nn.Parameter(uv.requires_grad_(True))
 
 
     def training_setup(self, training_args):
@@ -218,7 +218,7 @@ class GaussianModel:
         l = [
             {'params': [self._xyz], 'lr': training_args["position_lr_init"] * self.spatial_lr_scale, "name": "xyz"},
             # TODO lr?
-            {'params': [self._uv], 'lr': training_args["position_lr_init"] * training_args["uv_spatial_lr"], "name": "uv"},
+            # {'params': [self._uv], 'lr': training_args["position_lr_init"] * training_args["uv_spatial_lr"], "name": "uv"},
             {'params': [self._features_dc], 'lr': training_args["feature_lr"], "name": "f_dc"},
             {'params': [self._features_rest], 'lr': training_args["feature_lr"] / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args["opacity_lr"], "name": "opacity"},
@@ -261,7 +261,7 @@ class GaussianModel:
         os.makedirs(os.path.dirname(path), exist_ok = True)
 
         xyz = self._xyz.detach().cpu().numpy()
-        uv = self._uv.detach().cpu().numpy()
+        # uv = self._uv.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
@@ -319,7 +319,7 @@ class GaussianModel:
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._uv = nn.Parameter(torch.tensor(uv, dtype=torch.float, device="cuda").requires_grad_(True))
+        # self._uv = nn.Parameter(torch.tensor(uv, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -366,7 +366,7 @@ class GaussianModel:
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
-        self._uv = optimizable_tensors["uv"]
+        # self._uv = optimizable_tensors["uv"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
@@ -413,7 +413,7 @@ class GaussianModel:
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
-        self._uv = optimizable_tensors["uv"]
+        # self._uv = optimizable_tensors["uv"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
@@ -464,7 +464,7 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
         new_xyz = self._xyz[selected_pts_mask]
-        new_uv = self._uv[selected_pts_mask]
+        # new_uv = self._uv[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]

@@ -136,16 +136,13 @@ class AvatarTrainer:
         items = net_util.delete_batch_idx(items)
         pose_map = items['smpl_pos_map'][:3]
 
-        positions, rotations, scales, opacity, _ = self.avatar_net.get_gaussian_feat(pose_map)
-
-        # position_loss = l1_loss(self.avatar_net.get_positions(pose_map), self.avatar_net.cano_gaussian_model.get_xyz)
-        position_loss = l1_loss(positions, self.avatar_net.cano_gaussian_model.get_xyz)
+        position_loss = l1_loss(self.avatar_net.get_positions(pose_map, self.avatar_net.cano_smpl_mask), self.avatar_net.cano_gaussian_model.get_xyz)
         total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
         })
 
-        # opacity, scales, rotations = self.avatar_net.get_others(pose_map)
+        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.cano_smpl_mask)
         opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
         total_loss += opacity_loss
         batch_losses.update({
@@ -164,50 +161,46 @@ class AvatarTrainer:
             'rotation': rotation_loss.item()
         })
 
-        items['color_img'][~items['mask_img']] = self.bg_color_cuda
-        # gt_image = items['color_img'].permute(2, 0, 1)
-        # mask_img = items['mask_img'].to(torch.float32)
-        boundary_mask_img = 1. - items['boundary_mask_img'].to(torch.float32)
-
-        render_output = self.avatar_net.render(items, self.bg_color)
+        # change T/F to 1/0
+        mask = self.avatar_net.get_mask(pose_map)
+        mask_loss = l1_loss(mask, self.avatar_net.cano_template_mask.float())
+        total_loss += mask_loss
+        batch_losses.update({
+            'UV_mask_loss': mask_loss.item()
+        })
 
         # mask loss with template
-        if self.loss_weight.get('mask', 0.) and 'template_mask_map' in render_output:
-            rendered_mask = render_output['mask_map'].squeeze(-1) * boundary_mask_img
-            # gt_mask = mask_img * boundary_mask_img
-            template_mask = render_output['template_mask_map'].squeeze(-1) * boundary_mask_img
-            # cv.imshow('rendered_mask', rendered_mask.detach().cpu().numpy())
-            # cv.imshow('gt_mask', gt_mask.detach().cpu().numpy())
-            # cv.waitKey(0)
-            # mask_loss = torch.abs(rendered_mask - gt_mask).mean()
-            template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
-            # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
-            # total_loss += self.loss_weight.get('mask', 0.) * mask_loss
-            total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
-            batch_losses.update({
-                # 'mask_loss': mask_loss.item(),
-                'template_mask_loss': template_mask_loss.item()
-            })
+        # if self.loss_weight.get('mask', 0.) and 'template_mask_map' in render_output:
+        #     rendered_mask = render_output['mask_map'].squeeze(-1) * boundary_mask_img
+        #     # gt_mask = mask_img * boundary_mask_img
+        #     template_mask = render_output['template_mask_map'].squeeze(-1) * boundary_mask_img
+        #     # cv.imshow('rendered_mask', rendered_mask.detach().cpu().numpy())
+        #     # cv.imshow('gt_mask', gt_mask.detach().cpu().numpy())
+        #     # cv.waitKey(0)
+        #     # mask_loss = torch.abs(rendered_mask - gt_mask).mean()
+        #     template_mask_loss = torch.abs(rendered_mask - template_mask).mean()
+        #     # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
+        #     # total_loss += self.loss_weight.get('mask', 0.) * mask_loss
+        #     total_loss += self.loss_weight.get('mask', 0.) * template_mask_loss
+        #     batch_losses.update({
+        #         # 'mask_loss': mask_loss.item(),
+        #         'template_mask_loss': template_mask_loss.item()
+        #     })
 
         # depth loss with template
-        if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
-            rendered_depth = render_output['depth_map'].squeeze(-1)
-            template_depth = render_output['template_depth_map'].squeeze(-1)
-            template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
-            total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
-            batch_losses.update({
-                'template_depth_loss': template_depth_loss.item()
-            })
+        # if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
+        #     rendered_depth = render_output['depth_map'].squeeze(-1)
+        #     template_depth = render_output['template_depth_map'].squeeze(-1)
+        #     template_depth_loss = torch.abs(rendered_depth - template_depth).mean()
+        #     total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
+        #     batch_losses.update({
+        #         'template_depth_loss': template_depth_loss.item()
+        #     })
 
         total_loss.backward()
 
         self.optm.step()
-        # update gaussian uv
-        self.avatar_net.cano_gaussian_model.optimizer.step()
-
         self.optm.zero_grad()
-        self.avatar_net.cano_gaussian_model.optimizer.zero_grad(set_to_none=True)
-
 
         return total_loss, batch_losses
 
@@ -313,13 +306,8 @@ class AvatarTrainer:
 
         # step_start.record()
         self.optm.step()
-        # update gaussian uv
-        self.avatar_net.cano_gaussian_model.optimizer.step()
-
-
         self.optm.zero_grad()
         # step_end.record()
-        self.avatar_net.cano_gaussian_model.optimizer.zero_grad(set_to_none=True)
 
         # torch.cuda.synchronize()
         # print(f'Forward costs: {forward_start.elapsed_time(forward_end) / 1000.}, ',
@@ -548,7 +536,7 @@ class AvatarTrainer:
                                     exact_hand_pose = True)
         items = net_util.to_cuda(item, add_batch = False)
 
-        gs_render = self.avatar_net.render(items, self.bg_color)
+        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining)
         # gs_render = self.avatar_net.render_debug(items)
         rgb_map = gs_render['rgb_map']
         rgb_map.clip_(0., 1.)
@@ -569,57 +557,32 @@ class AvatarTrainer:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
 
-        # training data
-        pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
-        intr = self.dataset.intr_mats[view_idx].copy()
-        intr[:2] *= img_factor
-        item = self.dataset.getitem(0,
-                                    pose_idx = pose_idx,
-                                    view_idx = view_idx,
-                                    training = False,
-                                    eval = True,
-                                    img_h = int(self.dataset.img_heights[view_idx] * img_factor),
-                                    img_w = int(self.dataset.img_widths[view_idx] * img_factor),
-                                    extr = self.dataset.extr_mats[view_idx],
-                                    intr = intr,
-                                    exact_hand_pose = True)
-        items = net_util.to_cuda(item, add_batch = False)
+        # export mask
+        mask = (gs_render["mask"] >= 0.5).cpu().numpy()
+        mask_image = (mask * 255).astype(np.uint8)
+        os.makedirs(output_dir + '/mask', exist_ok=True)
+        cv.imwrite(output_dir + '/mask/iter_%d.jpg' % self.iter_idx, mask_image)
 
-        gs_render = self.avatar_net.render(items, bg_color = self.bg_color)
-        # gs_render = self.avatar_net.render_debug(items)
-        rgb_map = gs_render['rgb_map']
-        rgb_map.clip_(0., 1.)
-        rgb_map = (rgb_map.cpu().numpy() * 255).astype(np.uint8)
-        # cv.imshow('rgb_map', rgb_map.cpu().numpy())
-        # cv.waitKey(0)
-        if not pretraining:
-            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/testing'
-        else:
-            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval_pretrain/testing'
-        gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
-        if gt_image is not None:
-            gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
-            rgb_map = np.concatenate([rgb_map, gt_image], 1)
-        os.makedirs(output_dir, exist_ok = True)
-        cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
-        if eval_cano_pts:
-            os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
+        # export pos map
+        pos_map = gs_render["pos_map"].cpu().numpy()
+        pos_map = (pos_map * 255).astype(np.uint8)
+        os.makedirs(output_dir + '/pos_map', exist_ok=True)
+        cv.imwrite(output_dir + '/pos_map/iter_%d.jpg' % self.iter_idx, pos_map)
 
-        # export UV map
-        uv = self.avatar_net.cano_gaussian_model.get_uv
-        pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
-        pixel_coords[:, 0] = torch.clamp(pixel_coords[:, 0], min=0, max=self.height - 1)
-        pixel_coords[:, 1] = torch.clamp(pixel_coords[:, 1], min=0, max=self.width - 1)
-        uv_map = torch.zeros((self.height, self.width, 3))
-        colors = gs_render["colors"]
-        for (x, y), color in zip(pixel_coords, colors):
-            uv_map[x, y] = color
-        uv_map.clip_(0., 1.)
-        uv_map = (uv_map.cpu().numpy() * 255).astype(np.uint8)
-        os.makedirs(output_dir + '/uv_map', exist_ok=True)
-        cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
+        # uv = self.avatar_net.cano_gaussian_model.get_uv
+        # pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
+        # pixel_coords[:, 0] = torch.clamp(pixel_coords[:, 0], min=0, max=self.height - 1)
+        # pixel_coords[:, 1] = torch.clamp(pixel_coords[:, 1], min=0, max=self.width - 1)
+        # uv_map = torch.zeros((self.height, self.width, 3))
+        # colors = gs_render["colors"]
+        # for (x, y), color in zip(pixel_coords, colors):
+        #     uv_map[x, y] = color
+        # uv_map.clip_(0., 1.)
+        # uv_map = (uv_map.cpu().numpy() * 255).astype(np.uint8)
+        # os.makedirs(output_dir + '/uv_map', exist_ok=True)
+        # cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
 
+        # template visualization
         os.makedirs(output_dir + '/template', exist_ok=True)
         template_mask_map = (gs_render["template_mask_map"].cpu().numpy() * 255)
 
@@ -942,6 +905,7 @@ if __name__ == '__main__':
         if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained') \
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
+            # for decoder learning
             trainer.pretrain()
         trainer.train()
     elif config.opt['mode'] == 'test':

@@ -31,25 +31,34 @@ class AvatarNet(nn.Module):
         cano_smpl_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
         self.cano_smpl_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
+
+        cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
+        self.cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)
+        self.cano_template_mask = torch.linalg.norm(self.cano_template_map, dim = -1) > 0.
+
         self.init_points = self.cano_smpl_map[self.cano_smpl_mask]
         self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/init_pts_lbs.npy')).to(torch.float32).to(config.device)
 
-        self.cano_gaussian_model.create_from_pcd(self.init_points, torch.rand_like(self.init_points), spatial_lr_scale = 2.5, cano_smpl_mask=self.cano_smpl_mask)
+        self.predict_cano_smpl_mask = torch.empty(0)
+        self.cano_gaussian_model.create_from_pcd(self.init_points, torch.rand_like(self.init_points), spatial_lr_scale = 2.5)
 
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 3, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.position_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 3, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 8, out_size = 1024, style_dim = 512, n_mlp = 2)
+        self.mask_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 1, out_size = 1024, style_dim = 512, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.position_style = torch.ones([1, self.position_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.position_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
+        self.mask_style = torch.ones([1, self.mask_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.mask_net.style_dim)
+
 
         # TODO separate features encoding?
-        self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
-        self.feature_style = torch.ones([1, self.feature_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.feature_net.style_dim)
+        # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
+        # self.feature_style = torch.ones([1, self.feature_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.feature_net.style_dim)
         # position + rotation + scaling + opacity + color
-        self.mlp_decoder = VanillaCondMLP(opt["feat_dim"], 0, 3 + 4 + 3 + 1 + 3, opt["mlp"])
+        # self.mlp_decoder = VanillaCondMLP(opt["feat_dim"], 0, 3 + 4 + 3 + 1 + 3, opt["mlp"])
 
         self.template_points = trimesh.load(config.opt['train']['data']['data_dir'] + '/template_raw.ply', process = False)
 
@@ -110,11 +119,12 @@ class AvatarNet(nn.Module):
 
         return gaussian_vals
 
-    def get_positions(self, pose_map, return_map = False):
+    def get_positions(self, pose_map, mask, return_map = False):
         position_map, _ = self.position_net([self.position_style], pose_map[None], randomize_noise = False)
         front_position_map, back_position_map = torch.split(position_map, [3, 3], 1)
         position_map = torch.cat([front_position_map, back_position_map], 3)[0].permute(1, 2, 0)
-        delta_position = 0.05 * position_map[self.cano_smpl_mask]
+        delta_position = 0.05 * position_map[mask]
+
         # delta_position = position_map[self.cano_smpl_mask]
 
         positions = delta_position + self.cano_gaussian_model.get_xyz
@@ -123,11 +133,12 @@ class AvatarNet(nn.Module):
         else:
             return positions
 
-    def get_others(self, pose_map):
+    def get_others(self, pose_map, mask):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
         front_map, back_map = torch.split(other_map, [8, 8], 1)
         other_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
-        others = other_map[self.cano_smpl_mask]  # (N, 8)
+        others = other_map[mask]  # (N, 8)
+
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
         opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
         scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
@@ -135,12 +146,13 @@ class AvatarNet(nn.Module):
 
         return opacity, scales, rotations
 
-    def get_colors(self, pose_map, front_viewdirs = None, back_viewdirs = None):
+    def get_colors(self, pose_map, mask, front_viewdirs = None, back_viewdirs = None):
         color_style = torch.rand_like(self.color_style) if self.random_style and self.training else self.color_style
         color_map, _ = self.color_net([color_style], pose_map[None], randomize_noise = False, view_feature1 = front_viewdirs, view_feature2 = back_viewdirs)
         front_color_map, back_color_map = torch.split(color_map, [3, 3], 1)
         color_map = torch.cat([front_color_map, back_color_map], 3)[0].permute(1, 2, 0)
-        colors = color_map[self.cano_smpl_mask]
+        colors = color_map[mask]
+
         return colors, color_map
 
     def get_feat_map(self, pose_map):
@@ -150,6 +162,15 @@ class AvatarNet(nn.Module):
         front_feat_map, back_feat_map = torch.split(feat_map, [self.opt["feat_dim"], self.opt["feat_dim"]], 1)
         feat_map = torch.cat([front_feat_map, back_feat_map], 3)[0].permute(1, 2, 0)
         return feat_map
+
+    def get_mask(self, pose_map):
+        mask_map, _ = self.mask_net([self.mask_style], pose_map[None], randomize_noise = False)
+        front_map, back_map = torch.split(mask_map, [1, 1], 1)
+        mask_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+        # squeeze to [0, 1]
+        mask_map = torch.sigmoid(mask_map)
+
+        return mask_map
 
     def get_interpolated_feat(self, pose_map):
         # [1024, 2048, 64]
@@ -253,17 +274,25 @@ class AvatarNet(nn.Module):
         if use_vae:
             pose_map = items['smpl_pos_map_vae'][:3]
 
-        cano_pts, rotations, scales, opacity, colors = self.get_gaussian_feat(pose_map)
-
-        # cano_pts, pos_map = self.get_positions(pose_map, return_map = True)
-        # opacity, scales, rotations = self.get_others(pose_map)
         # if not self.training:
         # scales = torch.clip(scales, 0., 0.03)
         if self.with_viewdirs:
             front_viewdirs, back_viewdirs = self.get_viewdir_feat(items)
         else:
             front_viewdirs, back_viewdirs = None, None
-        # colors, color_map = self.get_colors(pose_map, front_viewdirs, back_viewdirs)
+
+        mask = self.get_mask(pose_map)
+        if pretrain:
+            cano_pts, pos_map = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
+            opacity, scales, rotations = self.get_others(pose_map, self.cano_smpl_mask)
+            colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
+
+        else:
+            # update cano gs
+            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask >= 0.5], torch.rand_like(self.cano_smpl_map[mask >= 0.5]), spatial_lr_scale=2.5, cano_smpl_mask=mask)
+            cano_pts, pos_map = self.get_positions(pose_map, mask >= 0.5, return_map = True)
+            opacity, scales, rotations = self.get_others(pose_map, mask >= 0.5)
+            colors, color_map = self.get_colors(pose_map, mask >= 0.5, front_viewdirs, back_viewdirs)
 
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
@@ -295,10 +324,9 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        nonrigid_offset = gaussian_vals['positions'] - self.init_points[self.cano_gaussian_model.get_gs_index()]
+        # nonrigid_offset = gaussian_vals['positions'] - self.init_points[self.cano_gaussian_model.get_gs_index()]
 
-        if not pretrain:
-            gaussian_vals = self.transform_cano2live(gaussian_vals, items)
+        gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
         render_ret = render3(
             gaussian_vals,
@@ -331,8 +359,7 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        if not pretrain:
-            template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
+        template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
 
         template_render_ret = render3(
             template_gaussian_vals,
@@ -349,7 +376,7 @@ class AvatarNet(nn.Module):
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
-            'offset': nonrigid_offset,
+            # 'offset': nonrigid_offset,
 
             'depth_map': depth_map,
             'viewspace_points': viewspace_points,
@@ -357,9 +384,10 @@ class AvatarNet(nn.Module):
             'radii': radii,
 
             "colors": colors,
-            # 'pos_map': pos_map
+            'pos_map': pos_map,
             'template_mask_map': template_mask_map,
             'template_depth_map': template_depth_map,
+            "mask": mask
         }
 
         # if not self.training:
