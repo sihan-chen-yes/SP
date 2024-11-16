@@ -369,7 +369,7 @@ class AvatarTrainer:
                         fp.write(log_info + '\n')
 
                 if self.iter_idx % 200 == 0 and self.iter_idx != 0:
-                    if self.iter_idx % (10 * self.opt['train']['eval_interval']) == 0:
+                    if self.iter_idx % (self.opt['train']['eval_interval']) == 0:
                         eval_cano_pts = True
                     else:
                         eval_cano_pts = False
@@ -485,7 +485,7 @@ class AvatarTrainer:
                         torch.cuda.empty_cache()
 
                     if self.iter_idx % self.opt['train']['eval_interval'] == 0 and self.iter_idx != 0:
-                        if self.iter_idx % (10 * self.opt['train']['eval_interval']) == 0:
+                        if self.iter_idx % (self.opt['train']['eval_interval']) == 0:
                             eval_cano_pts = True
                         else:
                             eval_cano_pts = False
