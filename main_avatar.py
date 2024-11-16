@@ -557,6 +557,44 @@ class AvatarTrainer:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
 
+        # training data
+        pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
+        intr = self.dataset.intr_mats[view_idx].copy()
+        intr[:2] *= img_factor
+        item = self.dataset.getitem(0,
+                                    pose_idx = pose_idx,
+                                    view_idx = view_idx,
+                                    training = False,
+                                    eval = True,
+                                    img_h = int(self.dataset.img_heights[view_idx] * img_factor),
+                                    img_w = int(self.dataset.img_widths[view_idx] * img_factor),
+                                    extr = self.dataset.extr_mats[view_idx],
+                                    intr = intr,
+                                    exact_hand_pose = True)
+        items = net_util.to_cuda(item, add_batch = False)
+
+        gs_render = self.avatar_net.render(items, bg_color = self.bg_color, pretrain = pretraining)
+        # gs_render = self.avatar_net.render_debug(items)
+        rgb_map = gs_render['rgb_map']
+        rgb_map.clip_(0., 1.)
+        rgb_map = (rgb_map.cpu().numpy() * 255).astype(np.uint8)
+        # cv.imshow('rgb_map', rgb_map.cpu().numpy())
+        # cv.waitKey(0)
+        if not pretraining:
+            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/testing'
+        else:
+            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval_pretrain/testing'
+        gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
+        if gt_image is not None:
+            gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
+            rgb_map = np.concatenate([rgb_map, gt_image], 1)
+        os.makedirs(output_dir, exist_ok = True)
+        cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
+        if eval_cano_pts:
+            os.makedirs(output_dir + '/cano_pts', exist_ok = True)
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, (self.avatar_net.cano_gaussian_model.get_init_pts() + gs_render['offset']).cpu().numpy())
+
+
         # export mask
         mask = (gs_render["mask"] >= 0.5).cpu().numpy()
         mask_image = (mask * 255).astype(np.uint8)
