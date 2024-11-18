@@ -123,11 +123,11 @@ class AvatarNet(nn.Module):
         position_map, _ = self.position_net([self.position_style], pose_map[None], randomize_noise = False)
         front_position_map, back_position_map = torch.split(position_map, [3, 3], 1)
         position_map = torch.cat([front_position_map, back_position_map], 3)[0].permute(1, 2, 0)
-        delta_position = 0.05 * position_map[mask]
+        positions = position_map[mask]
+        # delta_position = 0.05 * position_map[mask]
 
         # delta_position = position_map[self.cano_smpl_mask]
-
-        positions = delta_position + self.cano_gaussian_model.get_xyz
+        assert (positions.shape[0] == self.cano_gaussian_model.get_xyz.shape[0])
         if return_map:
             return positions, position_map
         else:
