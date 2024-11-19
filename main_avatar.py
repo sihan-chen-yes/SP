@@ -232,7 +232,7 @@ class AvatarTrainer:
         # forward_start.record()
         render_output = self.avatar_net.render(items, self.bg_color)
         image = render_output['rgb_map'].permute(2, 0, 1)
-        # offset = render_output['offset']
+        offset = render_output['offset']
 
         # mask image & set bg color
         items['color_img'][~items['mask_img']] = self.bg_color_cuda
@@ -291,12 +291,12 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        # if self.loss_weight['offset'] > 0.:
-        #     offset_loss = torch.linalg.norm(offset, dim = -1).mean()
-        #     total_loss += self.loss_weight['offset'] * offset_loss
-        #     batch_losses.update({
-        #         'offset_loss': offset_loss.item()
-        #     })
+        if self.loss_weight['offset'] > 0.:
+            offset_loss = torch.linalg.norm(offset, dim = -1).mean()
+            total_loss += self.loss_weight['offset'] * offset_loss
+            batch_losses.update({
+                'offset_loss': offset_loss.item()
+            })
 
         # forward_end.record()
 
@@ -603,7 +603,9 @@ class AvatarTrainer:
 
         # export pos map
         pos_map = gs_render["pos_map"].cpu().numpy()
-        pos_map = (pos_map * 255).astype(np.uint8)
+        # normalize to [0,1]
+        pos_map_normalized = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
+        pos_map = (pos_map_normalized * 255).astype(np.uint8)
         os.makedirs(output_dir + '/pos_map', exist_ok=True)
         cv.imwrite(output_dir + '/pos_map/iter_%d.jpg' % self.iter_idx, pos_map)
 

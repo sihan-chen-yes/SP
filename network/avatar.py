@@ -127,7 +127,6 @@ class AvatarNet(nn.Module):
         # delta_position = 0.05 * position_map[mask]
 
         # delta_position = position_map[self.cano_smpl_mask]
-        assert (positions.shape[0] == self.cano_gaussian_model.get_xyz.shape[0])
         if return_map:
             return positions, position_map
         else:
@@ -286,6 +285,7 @@ class AvatarNet(nn.Module):
             cano_pts, pos_map = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
             opacity, scales, rotations = self.get_others(pose_map, self.cano_smpl_mask)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
+            smplx_cano_pts = cano_pts
 
         else:
             # update cano gs
@@ -293,6 +293,7 @@ class AvatarNet(nn.Module):
             cano_pts, pos_map = self.get_positions(pose_map, mask >= 0.5, return_map = True)
             opacity, scales, rotations = self.get_others(pose_map, mask >= 0.5)
             colors, color_map = self.get_colors(pose_map, mask >= 0.5, front_viewdirs, back_viewdirs)
+            smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
 
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
@@ -324,7 +325,7 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        # nonrigid_offset = gaussian_vals['positions'] - self.init_points[self.cano_gaussian_model.get_gs_index()]
+        nonrigid_offset = smplx_cano_pts - self.init_points
 
         gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
@@ -376,7 +377,7 @@ class AvatarNet(nn.Module):
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
-            # 'offset': nonrigid_offset,
+            'offset': nonrigid_offset,
 
             'depth_map': depth_map,
             'viewspace_points': viewspace_points,
