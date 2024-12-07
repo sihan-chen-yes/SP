@@ -34,7 +34,6 @@ class VertexAtrriShader(ShaderBase):
         images = hard_rgb_blend(texels, fragments, blend_params)
         return images
 
-
 class Renderer:
     def __init__(self, img_w: int, img_h: int, mvp = None, shader_name = 'vertex_attribute', bg_color = (0, 0, 0), win_name = None, device = 'cuda'):
         self.img_w = img_w

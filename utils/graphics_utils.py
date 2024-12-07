@@ -13,6 +13,9 @@ import torch
 import math
 import numpy as np
 from typing import NamedTuple
+from pytorch3d.renderer import (
+    OrthographicCameras,
+)
 
 class BasicPointCloud(NamedTuple):
     points : np.array
@@ -104,3 +107,15 @@ def uv_to_index(uv, width=2048, height=1024):
     index[:, 1] = (uv[:, 1] * (width - 1)).round()
 
     return index
+
+def get_orthographic_camera(extr, height, width, device):
+    camera = OrthographicCameras(
+        focal_length=((width / 2., height / 2.),),
+        principal_point=((width / 2., height / 2.),),
+        R=extr[:3, :3].unsqueeze(0),
+        T=extr[:3, 3].unsqueeze(0),
+        in_ndc=False,
+        device=device,
+        image_size=((height, width),)
+    )
+    return camera

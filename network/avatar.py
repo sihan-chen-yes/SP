@@ -16,6 +16,8 @@ from utils.graphics_utils import uv_to_index
 import trimesh
 from pytorch3d.ops import knn_points
 from utils.general_utils import inverse_sigmoid
+from utils.renderer.renderer_pytorch3d import Renderer
+from utils.graphics_utils import get_orthographic_camera
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
@@ -39,7 +41,6 @@ class AvatarNet(nn.Module):
         self.init_points = self.cano_smpl_map[self.cano_smpl_mask]
         self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/init_pts_lbs.npy')).to(torch.float32).to(config.device)
 
-        self.predict_cano_smpl_mask = torch.empty(0)
         self.cano_gaussian_model.create_from_pcd(self.init_points, torch.rand_like(self.init_points), spatial_lr_scale = 2.5)
 
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
@@ -47,12 +48,13 @@ class AvatarNet(nn.Module):
         self.position_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 3, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 8, out_size = 1024, style_dim = 512, n_mlp = 2)
         self.mask_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 1, out_size = 1024, style_dim = 512, n_mlp = 2)
+        self.depth_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = 1, out_size = 1024, style_dim = 512, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.position_style = torch.ones([1, self.position_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.position_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.mask_style = torch.ones([1, self.mask_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.mask_net.style_dim)
-
+        self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
 
         # TODO separate features encoding?
         # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -171,6 +173,12 @@ class AvatarNet(nn.Module):
 
         return mask_map
 
+    def get_predicted_depth_map(self, pose_map):
+        depth_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
+        front_map, back_map = torch.split(depth_map, [1, 1], 1)
+        depth_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+        return depth_map
+
     def get_interpolated_feat(self, pose_map):
         # [1024, 2048, 64]
         feat_map = self.get_feat_map(pose_map)
@@ -261,6 +269,95 @@ class AvatarNet(nn.Module):
         })
         return live_pos_map
 
+    def depth_map_to_pos_map(self, depth_map, mask, return_map=False):
+        height = depth_map.shape[0]
+        width = depth_map.shape[1] // 2
+        assert height == width
+        # prepare front and back cameras
+        cano_smpl_v = self.cano_gaussian_model.get_xyz.cpu().detach().numpy()
+        cano_center = 0.5 * (cano_smpl_v.min(0) + cano_smpl_v.max(0))
+        cano_center = torch.from_numpy(cano_center).to('cuda')
+
+        front_mv = torch.eye(4, dtype=torch.float32).to('cuda')
+        front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to('cuda')
+        front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
+        front_mv[1:3, :] *= -1
+        front_camera = get_orthographic_camera(front_mv, height, width, cano_center.device)
+
+        back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+        rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
+        rot_y = torch.from_numpy(rot_y).to(cano_center.device)
+        back_mv[:3, :3] = rot_y
+        back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+
+        back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
+        back_mv[1:3] *= -1
+        back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
+
+        depth_front = depth_map[:, :1024]
+        depth_back = depth_map[:, 1024:]
+
+        mask_front = mask[:, :1024]
+        mask_back = mask[:, 1024:]
+
+        points_world_front = self.depth_to_position(front_camera, depth_front)
+
+        points_world_back = self.depth_to_position(back_camera, depth_back)
+
+        position_map = torch.cat([points_world_front, points_world_back], dim=1)
+
+        mask = torch.cat([mask_front, mask_back], dim=1)
+        positions = position_map[mask]
+
+        if return_map:
+            return positions, position_map
+        else:
+            return positions
+
+    def depth_to_position(self, cameras, depth_map):
+        h, w = depth_map.shape
+        # homogeneous
+        x, y = torch.meshgrid(torch.arange(w, device=depth_map.device), torch.arange(h, device=depth_map.device), indexing="xy")
+        xy_depth = torch.stack((x, y, depth_map), dim=-1)  # (H, W, 3)
+        xy_depth = xy_depth.reshape(-1, 3).to(depth_map.device, dtype=torch.float32)  # Flatten to (N, 3)
+        xyz_unproj_world = cameras.unproject_points(xy_depth, world_coordinates=True)
+        points_world = xyz_unproj_world.reshape(h, w, -1)
+        return points_world
+
+    def position_to_depth(self, camera, xyz):
+        assert xyz.shape[0] == 1
+        xyz_cam = camera.get_world_to_view_transform().transform_points(xyz)
+        # extract the depth of each point as the 3rd coord of xyz_cam
+        depth = xyz_cam[:, :, 2:]
+
+        depths = depth.squeeze(0)
+        # project the points xyz to the camera
+        xy = camera.transform_points(xyz)[:, :, :2]
+
+        uv = torch.round(xy.squeeze(0)).long()
+        height, width = int(camera.image_size[0, 0]), int(camera.image_size[0, 1])
+
+        valid_mask = (uv[:, 0] >= 0) & (uv[:, 0] < width) & \
+                     (uv[:, 1] >= 0) & (uv[:, 1] < height)
+
+        uv = uv[valid_mask]
+        depths = depths[valid_mask]
+
+        linear_idx = uv[:, 1] * width + uv[:, 0]
+        depths = depths.squeeze()
+        flat_depth_map = torch.full((height * width,), float('inf'), device=xyz.device)
+        flat_depth_map.scatter_reduce_(
+            dim=0,
+            index=linear_idx,
+            src=depths,
+            reduce="amin"  # min
+        )
+
+        depth_map = flat_depth_map.view(height, width)
+        depth_map[depth_map == float('inf')] = 0
+
+        return depth_map
+
     def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
         """
         Note that no batch index in items.
@@ -281,19 +378,27 @@ class AvatarNet(nn.Module):
             front_viewdirs, back_viewdirs = None, None
 
         mask = self.get_mask(pose_map)
+        # use depth map predicted from 2D pose map
+        predicted_depth_map = self.get_predicted_depth_map(pose_map)
         if pretrain:
-            cano_pts, pos_map = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
+            # cano_pts, pos_map = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
+            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True)
             opacity, scales, rotations = self.get_others(pose_map, self.cano_smpl_mask)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
-            smplx_cano_pts = cano_pts
+            # smplx_cano_pts = cano_pts
 
         else:
             # update cano gs
-            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask >= 0.5], torch.rand_like(self.cano_smpl_map[mask >= 0.5]), spatial_lr_scale=2.5)
-            cano_pts, pos_map = self.get_positions(pose_map, mask >= 0.5, return_map = True)
-            opacity, scales, rotations = self.get_others(pose_map, mask >= 0.5)
-            colors, color_map = self.get_colors(pose_map, mask >= 0.5, front_viewdirs, back_viewdirs)
-            smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
+            # TODO threshold
+            mask_bool = mask > 0.5
+
+            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask_bool], torch.rand_like(self.cano_smpl_map[mask_bool]), spatial_lr_scale=2.5)
+            # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
+            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask_bool, return_map=True)
+
+            opacity, scales, rotations = self.get_others(pose_map, mask_bool)
+            colors, color_map = self.get_colors(pose_map, mask_bool, front_viewdirs, back_viewdirs)
+            # smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
 
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
@@ -325,7 +430,8 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        nonrigid_offset = smplx_cano_pts - self.init_points
+        # nonrigid_offset = smplx_cano_pts - self.init_points
+        nonrigid_offset = 0
 
         gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
@@ -390,6 +496,8 @@ class AvatarNet(nn.Module):
             'template_depth_map': template_depth_map,
             "mask": mask,
             "cano_pts": cano_pts,
+            'predicted_depth_map': predicted_depth_map,
+
         }
 
         # if not self.training:
