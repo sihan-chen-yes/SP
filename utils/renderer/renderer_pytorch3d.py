@@ -118,6 +118,8 @@ class Renderer:
         img = self.renderer(self.mesh, cameras = self.renderer.rasterizer.cameras)
         return img[0].cpu().numpy()
 
+    def get_cameras(self):
+        return self.renderer.rasterizer.cameras
 
 if __name__ == '__main__':
     import trimesh
