@@ -191,10 +191,10 @@ class AvatarTrainer:
         #     save_mesh_as_ply('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/iter_debug.ply', position.cpu().numpy())
         #
         #     # save depth map from canonical template
-        #     cano_smpl_depth_map = colormap(cano_smpl_depth_map.cpu()).numpy()
+        #     cano_smpl_depth_map = cano_smpl_depth_map.cpu().numpy()
         #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template", exist_ok=True)
         #
-        #     cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.jpg', cano_smpl_depth_map)
+        #     cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.exr', cano_smpl_depth_map)
 
          # debug template
         # with torch.no_grad():
@@ -203,19 +203,21 @@ class AvatarTrainer:
         #
         #     # depth to position
         #     mask = cano_template_depth_map > 0
+        #     # mask = self.avatar_net.cano_smpl_mask > 0
+        #
         #
         #     position = self.avatar_net.depth_map_to_pos_map(cano_template_depth_map, mask)
         #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/", exist_ok=True)
         #     save_mesh_as_ply('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/iter_debug.ply', position.cpu().numpy())
         #
         #     # save depth map from canonical template
-        #     cano_template_depth_map = colormap(cano_template_depth_map.cpu()).numpy()
+        #     cano_template_depth_map = cano_template_depth_map.cpu().numpy()
         #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template", exist_ok=True)
-        #
-        #     cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.jpg', cano_template_depth_map)
+
+            # cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.jpg', cano_template_depth_map)
 
         # predicted depth map loss
-        cano_smpl_depth_loss = torch.abs(predicted_depth - self.avatar_net.cano_smpl_depth_map).mean()
+        cano_smpl_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
         total_loss += cano_smpl_depth_loss
         batch_losses.update({
             'cano_predicted_depth_loss': cano_smpl_depth_loss.item()
@@ -386,7 +388,7 @@ class AvatarTrainer:
                 smooth_count += 1
 
                 if self.iter_idx % smooth_interval == 0:
-                    log_info = 'epoch %d, batch %d, iter %d, ' % (epoch_idx, batch_idx, self.iter_idx)
+                    log_info = 'epoch %d, batch %d, iter %d ' % (epoch_idx, batch_idx, self.iter_idx)
                     for key in smooth_losses.keys():
                         smooth_losses[key] /= smooth_count
                         writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)

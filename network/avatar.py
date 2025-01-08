@@ -46,7 +46,7 @@ class AvatarNet(nn.Module):
         # get orthographic projected depth map
         self.height, self.width = 1024, 1024
         # with torch.no_grad():
-        #     self.cano_depth_map = self.get_orthographic_depth_map(self.cano_gaussian_model)
+        #     self.cano_smpl_depth_map = self.get_orthographic_depth_map(self.cano_gaussian_model)
         #     self.cano_template_depth_map = self.get_orthographic_depth_map(self.cano_template_gaussian_model)
 
         cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map/cano_smpl_depth_map.exr', cv.IMREAD_UNCHANGED)
@@ -190,61 +190,63 @@ class AvatarNet(nn.Module):
         depth_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
         front_map, back_map = torch.split(depth_map, [1, 1], 1)
         depth_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+        # clamp negative depth
+        depth_map = torch.clamp(depth_map, min=0)
         return depth_map
 
-    def get_interpolated_feat(self, pose_map):
-        # [1024, 2048, 64]
-        feat_map = self.get_feat_map(pose_map)
-        uv = self.cano_gaussian_model.get_uv
-        width = 2048
-        height = 1024
-        x = uv[:, 0] * (height - 1)
-        y = uv[:, 1] * (width - 1)
+    # def get_interpolated_feat(self, pose_map):
+    #     # [1024, 2048, 64]
+    #     feat_map = self.get_feat_map(pose_map)
+    #     uv = self.cano_gaussian_model.get_uv
+    #     width = 2048
+    #     height = 1024
+    #     x = uv[:, 0] * (height - 1)
+    #     y = uv[:, 1] * (width - 1)
+    #
+    #     # Find the four surrounding points for bi-linear interpolation
+    #     x0 = torch.floor(x).long()
+    #     x1 = torch.clamp(x0 + 1, 0, width - 1)
+    #     y0 = torch.floor(y).long()
+    #     y1 = torch.clamp(y0 + 1, 0, height - 1)
+    #
+    #     # Compute interpolation weights based on fractional parts
+    #     # gap is 1(denominator 1)
+    #     wx = x - x0.float()
+    #     wy = y - y0.float()
+    #     w00 = (1 - wx) * (1 - wy)
+    #     w10 = wx * (1 - wy)
+    #     w01 = (1 - wx) * wy
+    #     w11 = wx * wy
+    #
+    #     # Gather features at the four corners
+    #     f00 = feat_map[x0, y0]  # Top-left
+    #     f10 = feat_map[x1, y0]  # Bottom-left
+    #     f01 = feat_map[x0, y1]  # Top-right
+    #     f11 = feat_map[x1, y1]  # Bottom-right
+    #
+    #     # Compute the interpolated features
+    #     interpolated_feat = (w00[:, None] * f00 +
+    #                          w01[:, None] * f01 +
+    #                          w10[:, None] * f10 +
+    #                          w11[:, None] * f11)
+    #     return interpolated_feat
 
-        # Find the four surrounding points for bi-linear interpolation
-        x0 = torch.floor(x).long()
-        x1 = torch.clamp(x0 + 1, 0, width - 1)
-        y0 = torch.floor(y).long()
-        y1 = torch.clamp(y0 + 1, 0, height - 1)
-
-        # Compute interpolation weights based on fractional parts
-        # gap is 1(denominator 1)
-        wx = x - x0.float()
-        wy = y - y0.float()
-        w00 = (1 - wx) * (1 - wy)
-        w10 = wx * (1 - wy)
-        w01 = (1 - wx) * wy
-        w11 = wx * wy
-
-        # Gather features at the four corners
-        f00 = feat_map[x0, y0]  # Top-left
-        f10 = feat_map[x1, y0]  # Bottom-left
-        f01 = feat_map[x0, y1]  # Top-right
-        f11 = feat_map[x1, y1]  # Bottom-right
-
-        # Compute the interpolated features
-        interpolated_feat = (w00[:, None] * f00 +
-                             w01[:, None] * f01 +
-                             w10[:, None] * f10 +
-                             w11[:, None] * f11)
-        return interpolated_feat
-
-    def get_gaussian_feat(self, pose_map):
-        feat = self.get_interpolated_feat(pose_map)
-        # position + rotation + scaling + opacity + color
-        output = self.mlp_decoder(feat)
-
-        delta_position, delta_rotation, delta_scales, delta_opacity, colors = torch.split(output, [3, 4, 3, 1, 3], 1)
-
-        delta_position = 0.05 * delta_position
-        positions = delta_position + self.cano_gaussian_model.get_xyz
-        rotations = self.cano_gaussian_model.rotation_activation(delta_rotation + self.cano_gaussian_model.get_rotation_raw)
-        scales = self.cano_gaussian_model.scaling_activation(delta_scales + self.cano_gaussian_model.get_scaling_raw)
-        opacity = self.cano_gaussian_model.opacity_activation(delta_opacity + self.cano_gaussian_model.get_opacity_raw)
-        #TODO color activation?
-        colors = self.cano_gaussian_model.color_activation(colors)
-
-        return positions, rotations, scales, opacity, colors
+    # def get_gaussian_feat(self, pose_map):
+    #     feat = self.get_interpolated_feat(pose_map)
+    #     # position + rotation + scaling + opacity + color
+    #     output = self.mlp_decoder(feat)
+    #
+    #     delta_position, delta_rotation, delta_scales, delta_opacity, colors = torch.split(output, [3, 4, 3, 1, 3], 1)
+    #
+    #     delta_position = 0.05 * delta_position
+    #     positions = delta_position + self.cano_gaussian_model.get_xyz
+    #     rotations = self.cano_gaussian_model.rotation_activation(delta_rotation + self.cano_gaussian_model.get_rotation_raw)
+    #     scales = self.cano_gaussian_model.scaling_activation(delta_scales + self.cano_gaussian_model.get_scaling_raw)
+    #     opacity = self.cano_gaussian_model.opacity_activation(delta_opacity + self.cano_gaussian_model.get_opacity_raw)
+    #     #TODO color activation?
+    #     colors = self.cano_gaussian_model.color_activation(colors)
+    #
+    #     return positions, rotations, scales, opacity, colors
 
     def get_viewdir_feat(self, items):
         # TODO
@@ -327,14 +329,45 @@ class AvatarNet(nn.Module):
         else:
             return positions
 
+    # def depth_to_position(self, cameras, depth_map):
+    #     h, w = depth_map.shape
+    #     # homogeneous
+    #     x, y = torch.meshgrid(torch.arange(w, device=depth_map.device), torch.arange(h, device=depth_map.device), indexing="xy")
+    #     xy_depth = torch.stack((x, y, depth_map), dim=-1)  # (H, W, 3)
+    #     xy_depth = xy_depth.reshape(-1, 3).to(depth_map.device, dtype=torch.float32)  # Flatten to (N, 3)
+    #     xyz_unproj_world = cameras.unproject_points(xy_depth, world_coordinates=True)
+    #     points_world = xyz_unproj_world.reshape(h, w, -1)
+    #     return points_world
+
     def depth_to_position(self, cameras, depth_map):
         h, w = depth_map.shape
-        # homogeneous
+        # recover camera view coords
         x, y = torch.meshgrid(torch.arange(w, device=depth_map.device), torch.arange(h, device=depth_map.device), indexing="xy")
-        xy_depth = torch.stack((x, y, depth_map), dim=-1)  # (H, W, 3)
-        xy_depth = xy_depth.reshape(-1, 3).to(depth_map.device, dtype=torch.float32)  # Flatten to (N, 3)
-        xyz_unproj_world = cameras.unproject_points(xy_depth, world_coordinates=True)
-        points_world = xyz_unproj_world.reshape(h, w, -1)
+        xy_depth = torch.stack((x, y, torch.ones((x.shape[0], x.shape[1]), device=depth_map.device, dtype=torch.float32)), dim=-1)  # (H, W, 3)
+        xy_depth = xy_depth.reshape(-1, 3)
+        fx, fy = cameras.focal_length[0]
+        cx, cy = cameras.principal_point[0]
+        intr = torch.tensor([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], device=depth_map.device, dtype=torch.float32)
+        intr_inv = torch.linalg.inv(intr)
+        xy_cam = xy_depth @ intr_inv.T
+        # careful with orthographic: replace z with D directly!
+        depth = depth_map.flatten()
+        xy_cam[:, 2] = depth
+        # recover world view coords
+        R = cameras.R[0]
+        T = cameras.T[0]
+        extr = torch.eye(4, device=depth_map.device)
+        extr[:3, :3] = R
+        extr[:3, -1] = T
+        extr_inv = torch.linalg.inv(extr)
+        xy_cam_homo = torch.cat((xy_cam, torch.ones((xy_cam.shape[0], 1), device=depth_map.device)), dim=1) # (N, 4)
+        xyz_unproj_world = xy_cam_homo @ extr_inv.T
+        points_world = xyz_unproj_world[:, :3]  # Remove homogeneous coordinate
+        points_world = points_world.reshape(h, w, -1)
         return points_world
 
     def position_to_depth(self, camera, xyz):
@@ -405,7 +438,7 @@ class AvatarNet(nn.Module):
         #     colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
         #     # smplx_cano_pts = cano_pts
         if pretrain:
-            mask = self.cano_smpl_depth_map > 0
+            mask = self.cano_smpl_mask
             cano_pts, pos_map = self.depth_map_to_pos_map(self.cano_smpl_depth_map, mask, return_map=True)
             opacity, scales, rotations = self.get_others(pose_map, mask)
             colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)

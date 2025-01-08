@@ -115,8 +115,10 @@ class Renderer:
         self.mesh = Meshes([vertices], [faces], textures = textures)
 
     def render(self):
-        img = self.renderer(self.mesh, cameras = self.renderer.rasterizer.cameras)
-        return img[0].cpu().numpy()
+        fragments = self.renderer.rasterizer(self.mesh, cameras = self.renderer.rasterizer.cameras)
+        img = self.renderer.shader(fragments, self.mesh, cameras = self.renderer.rasterizer.cameras)
+        zbuf = fragments.zbuf
+        return img[0].cpu().numpy(), zbuf[0].cpu().numpy()
 
     def get_cameras(self):
         return self.renderer.rasterizer.cameras

@@ -106,36 +106,25 @@ if __name__ == '__main__':
     # render canonical smpl position maps
     cano_renderer.set_camera(front_mv)
     cano_renderer.set_model(cano_smpl_v_dup, cano_smpl_v_dup)
-    front_cano_pos_map = cano_renderer.render()[:, :, :3]
-
-    # depth map
-    front_cano_smpl_v_dup_cam = cano_renderer.get_cameras().get_world_to_view_transform().transform_points(torch.from_numpy(cano_smpl_v_dup).cuda())
-    front_cano_smpl_v_dup_cam = front_cano_smpl_v_dup_cam.cpu().numpy()
-    # TODO
-    cano_renderer.set_model(cano_smpl_v_dup, front_cano_smpl_v_dup_cam)
-    front_cano_depth_map = cano_renderer.render()[:, :, 2]
+    front_cano_pos_map, front_cano_depth_map = cano_renderer.render()
+    front_cano_pos_map = front_cano_pos_map[:, :, :3]
 
     cano_renderer.set_camera(back_mv)
     cano_renderer.set_model(cano_smpl_v_dup, cano_smpl_v_dup)
-    back_cano_pos_map = cano_renderer.render()[:, :, :3]
+    back_cano_pos_map, back_cano_depth_map = cano_renderer.render()
+    back_cano_pos_map = back_cano_pos_map[:, :, :3]
     back_cano_pos_map = cv.flip(back_cano_pos_map, 1)
 
-    # depth map
-    back_cano_smpl_v_dup_cam = cano_renderer.get_cameras().get_world_to_view_transform().transform_points(torch.from_numpy(cano_smpl_v_dup).cuda())
-    back_cano_smpl_v_dup_cam = back_cano_smpl_v_dup_cam.cpu().numpy()
-    # TODO
-    cano_renderer.set_model(cano_smpl_v_dup, back_cano_smpl_v_dup_cam)
-    back_cano_depth_map = cano_renderer.render()[:, :, 2]
     back_cano_depth_map = cv.flip(back_cano_depth_map, 1)
-
+    back_cano_depth_map = np.expand_dims(back_cano_depth_map, axis=2)
     cano_pos_map = np.concatenate([front_cano_pos_map, back_cano_pos_map], 1)
     cano_depth_map = np.concatenate([front_cano_depth_map, back_cano_depth_map], 1)
-    cano_depth_map_normalized = (cano_depth_map - cano_depth_map.min()) / (cano_depth_map.max() - cano_depth_map.min())
+    # cano_depth_map_normalized = (cano_depth_map - cano_depth_map.min()) / (cano_depth_map.max() - cano_depth_map.min())
     cano_depth_map_visual = colormap(cano_depth_map).numpy()
 
     cv.imwrite(data_dir + '/smpl_pos_map/cano_smpl_pos_map.exr', cano_pos_map)
     cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map.exr', cano_depth_map)
-    cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map_normalized.exr', cano_depth_map_normalized)
+    # cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map_normalized.exr', cano_depth_map_normalized)
     cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map_visual.exr', cano_depth_map_visual)
 
     # render canonical smpl normal maps
