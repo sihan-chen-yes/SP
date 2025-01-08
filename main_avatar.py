@@ -54,7 +54,8 @@ class AvatarTrainer:
         self.optm = torch.optim.Adam(
             self.avatar_net.parameters(), lr = self.lr_init
         )
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optm, 'min', patience=10)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optm, 'min', patience=100, threshold=1e-3,
+                                                                    cooldown=100, factor=0.9)
         self.random_bg_color = self.opt['train'].get('random_bg_color', True)
         self.bg_color = (1., 1., 1.)
         self.bg_color_cuda = torch.from_numpy(np.asarray(self.bg_color)).to(torch.float32).to(config.device)
