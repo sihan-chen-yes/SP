@@ -11,6 +11,7 @@ import torch.autograd as autograd
 import numpy as np
 
 import network.styleunet.conv2d_gradfix as conv2d_gradfix
+import pytorch3d.ops
 
 
 class SecondOrderSmoothnessLossForSequence(nn.Module):
@@ -158,3 +159,25 @@ def g_nonsaturating_loss(fake_pred):
 
     return loss
 
+def chamfer_loss(P, Q):
+    """
+    Calculate the Chamfer loss (MSE) between two point sets P and Q.
+
+    Args:
+        P (torch.Tensor): A tensor of shape (m, d), representing the first point set.
+        Q (torch.Tensor): A tensor of shape (n, d), representing the second point set.
+
+    Returns:
+        torch.Tensor: A scalar representing the Chamfer loss.
+    """
+    P_to_Q_knn_ret = pytorch3d.ops.knn_points(P.unsqueeze(0),
+                                              Q.unsqueeze(0))
+    p_idx = P_to_Q_knn_ret.idx.squeeze()
+    P_to_Q_loss = torch.norm(P - Q[p_idx], dim=-1).mean()
+
+    Q_to_P_knn_ret = pytorch3d.ops.knn_points(Q.unsqueeze(0),
+                                              P.unsqueeze(0))
+    q_idx = Q_to_P_knn_ret.idx.squeeze()
+    Q_to_P_loss = torch.norm(Q - P[q_idx], dim=-1).mean()
+
+    return P_to_Q_loss + Q_to_P_loss

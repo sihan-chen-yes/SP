@@ -32,7 +32,7 @@ from pytorch3d.renderer import (
     OrthographicCameras,
 )
 from utils.graphics_utils import get_orthographic_camera
-
+from utils.losses import chamfer_loss
 def safe_exists(path):
     if path is None:
         return False
@@ -130,7 +130,7 @@ class AvatarTrainer:
         ).mean()
         return lpips_loss
     #TODO
-    def forward_one_pass_pretrain(self, items):
+    def forward_one_pass_pretrain(self, items, template=False):
         total_loss = 0
         batch_losses = {}
         if self.random_bg_color:
@@ -143,9 +143,17 @@ class AvatarTrainer:
         pose_map = items['smpl_pos_map'][:3]
 
         predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
-
-        position = self.avatar_net.depth_map_to_pos_map(predicted_depth, self.avatar_net.cano_smpl_mask)
-        position_loss = l1_loss(position, self.avatar_net.cano_gaussian_model.get_xyz)
+        # TODO mask choice?
+        predicted_mask = predicted_depth > 0.
+        if template:
+            # use clothed template 3d pts to supervise
+            # predict clothed template mask
+            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, predicted_mask)
+            position_loss = chamfer_loss(position, self.avatar_net.cano_template_init_points)
+        else:
+            # use smplx 3d pts to supervise
+            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, self.avatar_net.cano_smpl_mask)
+            position_loss = chamfer_loss(position, self.avatar_net.cano_init_points)
         total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
@@ -171,22 +179,29 @@ class AvatarTrainer:
         })
 
         # change T/F to 1/0
-        mask = self.avatar_net.get_mask(pose_map)
-        mask_loss = F.binary_cross_entropy(mask, self.avatar_net.cano_smpl_mask.float())
-        total_loss += mask_loss
-        batch_losses.update({
-            'UV_mask_loss': mask_loss.item()
-        })
+        # mask = self.avatar_net.get_mask(pose_map)
+        # mask_loss = F.binary_cross_entropy(mask, self.avatar_net.cano_smpl_mask.float())
+        # total_loss += mask_loss
+        # batch_losses.update({
+        #     'UV_mask_loss': mask_loss.item()
+        # })
 
         #  dev
         # self.avatar_net.gen_depth_map()
 
         # predicted depth map loss
-        cano_smpl_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
-        total_loss += cano_smpl_depth_loss
-        batch_losses.update({
-            'cano_predicted_depth_loss': cano_smpl_depth_loss.item()
-        })
+        if template:
+            # not gt depth map supervise here
+            cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_template_depth_map)
+            batch_losses.update({
+                'cano_template_predicted_depth_loss': cano_depth_loss.item()
+            })
+        else:
+            cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
+            total_loss += cano_depth_loss
+            batch_losses.update({
+                'cano_smpl_predicted_depth_loss': cano_depth_loss.item()
+            })
 
         total_loss.backward()
 
@@ -312,7 +327,7 @@ class AvatarTrainer:
 
         return total_loss, batch_losses, render_output
 
-    def pretrain(self):
+    def pretrain(self, template=False):
         dataset_module = self.opt['train'].get('dataset', 'MvRgbDatasetAvatarReX')
         MvRgbDataset = importlib.import_module('dataset.dataset_mv_rgb').__getattribute__(dataset_module)
         self.dataset = MvRgbDataset(**self.opt['train']['data'])
@@ -331,6 +346,23 @@ class AvatarTrainer:
         smooth_interval = 10
         smooth_count = 0
         smooth_losses = {}
+        self.iter_idx = 0
+        if template:
+            print("using param pretrained on smplx")
+            # loading ckpt from smplx pretrain
+            if safe_exists(self.opt['train']['pretrained_dir']):
+                self.load_ckpt(self.opt['train']['pretrained_dir'], load_optm=False)
+            elif safe_exists(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl'):
+                print("pretrain on template\n")
+                self.load_ckpt(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl', load_optm=False)
+            else:
+                raise FileNotFoundError('Cannot find smplx pretrained checkpoint!')
+
+            self.optm.state = collections.defaultdict(dict)
+            # TODO scheduler handle
+
+        else:
+            print("pretraining on smplx")
 
         for epoch_idx in range(0, 9999999):
             self.epoch_idx = epoch_idx
@@ -339,7 +371,7 @@ class AvatarTrainer:
                 items = to_cuda(items)
 
                 # one_step_start.record()
-                total_loss, batch_losses = self.forward_one_pass_pretrain(items)
+                total_loss, batch_losses = self.forward_one_pass_pretrain(items, template=template)
                 # one_step_end.record()
                 # torch.cuda.synchronize()
                 # print('One step costs %f secs' % (one_step_start.elapsed_time(one_step_end) / 1000.))
@@ -369,7 +401,7 @@ class AvatarTrainer:
                         eval_cano_pts = True
                     else:
                         eval_cano_pts = False
-                    self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts)
+                    self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts, template=template)
 
                 if self.iter_idx == 5000:
                     model_folder = self.opt['train']['net_ckpt_dir'] + '/pretrained'
@@ -512,7 +544,7 @@ class AvatarTrainer:
                 self.save_ckpt(latest_folder)
 
     @torch.no_grad()
-    def mini_test(self, pretraining = False, eval_cano_pts = False):
+    def mini_test(self, pretraining = False, eval_cano_pts = False, template=False):
         self.avatar_net.eval()
 
         img_factor = self.opt['train'].get('eval_img_factor', 1.0)
@@ -532,7 +564,7 @@ class AvatarTrainer:
                                     exact_hand_pose = True)
         items = net_util.to_cuda(item, add_batch = False)
 
-        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining)
+        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining, template=template)
         # gs_render = self.avatar_net.render_debug(items)
         rgb_map = gs_render['rgb_map']
         rgb_map.clip_(0., 1.)
@@ -592,7 +624,7 @@ class AvatarTrainer:
 
 
         # export mask
-        predicted_mask = (gs_render["predicted_mask"] >= 0.5).cpu().numpy()
+        predicted_mask = gs_render["predicted_mask"].cpu().numpy()
         predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
         predicted_depth_map = colormap(gs_render["predicted_depth_map"].cpu()).numpy()
 
@@ -624,22 +656,22 @@ class AvatarTrainer:
         # template visualization
         os.makedirs(output_dir + '/template', exist_ok=True)
 
-        cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
+        # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
         template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
         cano_template_ort_depth_map = colormap(self.avatar_net.cano_template_depth_map.cpu()).numpy()
-        cano_depth_map = colormap(gs_render["cano_depth_map"].cpu()).numpy()
+        # cano_depth_map = colormap(gs_render["cano_depth_map"].cpu()).numpy()
         depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
         cano_ort_depth_map = colormap(self.avatar_net.cano_smpl_depth_map.cpu()).numpy()
 
 
         # cv.imwrite(output_dir + '/template/cano_template_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_depth_map)
         cv.imwrite(output_dir + '/template/template_depth_map_iter_%d.jpg' % self.iter_idx, template_depth_map)
-        cv.imwrite(output_dir + '/template/cano_template_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_ort_depth_map)
+        # cv.imwrite(output_dir + '/template/cano_template_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_ort_depth_map)
 
         os.makedirs(output_dir + '/train', exist_ok=True)
         # cv.imwrite(output_dir + '/train/cano_depth_map_iter_%d.jpg' % self.iter_idx, cano_depth_map)
         cv.imwrite(output_dir + '/train/depth_map_iter_%d.jpg' % self.iter_idx, depth_map)
-        cv.imwrite(output_dir + '/train/cano_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_ort_depth_map)
+        # cv.imwrite(output_dir + '/train/cano_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_ort_depth_map)
 
         self.avatar_net.train()
 
@@ -954,11 +986,16 @@ if __name__ == '__main__':
 
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
-        if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained') \
+        if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_smpl') \
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # for decoder learning
             trainer.pretrain()
+        elif not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
+                and not safe_exists(config.opt['train']['pretrained_dir'])\
+                and not safe_exists(config.opt['train']['prev_ckpt']):
+            # finetune on template
+            trainer.pretrain(template=True)
         trainer.train()
     elif config.opt['mode'] == 'test':
         trainer.test()

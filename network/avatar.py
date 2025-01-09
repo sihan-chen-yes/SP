@@ -415,7 +415,7 @@ class AvatarNet(nn.Module):
 
         return depth_map
 
-    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
+    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False, template=False):
         """
         Note that no batch index in items.
         """
@@ -434,31 +434,33 @@ class AvatarNet(nn.Module):
         else:
             front_viewdirs, back_viewdirs = None, None
 
-        predicted_mask = self.get_mask(pose_map)
+        # predicted_mask = self.get_mask(pose_map)
         # use depth map predicted from 2D pose map
         predicted_depth_map = self.get_predicted_depth_map(pose_map)
-        # if pretrain:
-        #     mask = predicted_depth_map > 0
-        #     cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask, return_map=True)
-        #     opacity, scales, rotations = self.get_others(pose_map, mask)
-        #     colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
-        #     # smplx_cano_pts = cano_pts
+        predicted_mask = predicted_depth_map > 0
         if pretrain:
-            mask = self.cano_smpl_mask
-            cano_pts, pos_map = self.depth_map_to_pos_map(self.cano_smpl_depth_map, mask, return_map=True)
+            if template:
+                # pretrain on clothed template
+                mask = predicted_depth_map > 0
+                depth_map = predicted_depth_map
+            else:
+                # pretrain on smplx
+                mask = self.cano_smpl_mask
+                depth_map = self.cano_smpl_depth_map
+            cano_pts, pos_map = self.depth_map_to_pos_map(depth_map, mask, return_map=True)
             opacity, scales, rotations = self.get_others(pose_map, mask)
             colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
         else:
             # update cano gs
             # TODO threshold
-            mask_bool = predicted_mask > 0.5
+            mask = predicted_mask > 0.5
 
-            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask_bool], torch.rand_like(self.cano_smpl_map[mask_bool]), spatial_lr_scale=2.5)
+            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask], torch.rand_like(self.cano_smpl_map[mask]), spatial_lr_scale=2.5)
             # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
-            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask_bool, return_map=True)
+            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask, return_map=True)
 
-            opacity, scales, rotations = self.get_others(pose_map, mask_bool)
-            colors, color_map = self.get_colors(pose_map, mask_bool, front_viewdirs, back_viewdirs)
+            opacity, scales, rotations = self.get_others(pose_map, mask)
+            colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
             # smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
 
 
@@ -491,16 +493,16 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        render_ret = render3(
-            gaussian_vals,
-            bg_color,
-            items['extr'],
-            items['intr'],
-            items['img_w'],
-            items['img_h']
-        )
-
-        cano_depth_map = render_ret['depth'].permute(1, 2, 0)
+        # render_ret = render3(
+        #     gaussian_vals,
+        #     bg_color,
+        #     items['extr'],
+        #     items['intr'],
+        #     items['img_w'],
+        #     items['img_h']
+        # )
+        #
+        # cano_depth_map = render_ret['depth'].permute(1, 2, 0)
 
         # nonrigid_offset = smplx_cano_pts - self.init_points
         nonrigid_offset = 0
@@ -538,15 +540,15 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree
         }
 
-        template_render_ret = render3(
-            template_gaussian_vals,
-            bg_color,
-            items['extr'],
-            items['intr'],
-            items['img_w'],
-            items['img_h']
-        )
-        cano_template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
+        # template_render_ret = render3(
+        #     template_gaussian_vals,
+        #     bg_color,
+        #     items['extr'],
+        #     items['intr'],
+        #     items['img_w'],
+        #     items['img_h']
+        # )
+        # cano_template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
         template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
 
@@ -568,7 +570,7 @@ class AvatarNet(nn.Module):
             'offset': nonrigid_offset,
 
             'depth_map': depth_map,
-            'cano_depth_map': cano_depth_map,
+            # 'cano_depth_map': cano_depth_map,
 
             'viewspace_points': viewspace_points,
             'visibility_filter': visibility_filter,
@@ -578,7 +580,7 @@ class AvatarNet(nn.Module):
             'pos_map': pos_map,
             # 'template_mask_map': template_mask_map,
             'template_depth_map': template_depth_map,
-            'cano_template_depth_map': cano_template_depth_map,
+            # 'cano_template_depth_map': cano_template_depth_map,
             "predicted_mask": predicted_mask,
             "cano_pts": cano_pts,
             'predicted_depth_map': predicted_depth_map,
