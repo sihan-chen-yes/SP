@@ -93,6 +93,27 @@ class AvatarNet(nn.Module):
                 nn.Conv2d(64, 128, 4, 2, 1)
             )
 
+        # prepare front and back cameras
+        cano_smpl_v = self.cano_gaussian_model.get_xyz.cpu().detach().numpy()
+        cano_center = 0.5 * (cano_smpl_v.min(0) + cano_smpl_v.max(0))
+        cano_center = torch.from_numpy(cano_center).to('cuda')
+
+        front_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+        front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+        front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
+        front_mv[1:3, :] *= -1
+        self.front_camera = get_orthographic_camera(front_mv, self.height, self.width, cano_center.device)
+
+        back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+        rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
+        rot_y = torch.from_numpy(rot_y).to(cano_center.device)
+        back_mv[:3, :3] = rot_y
+        back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+
+        back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
+        back_mv[1:3] *= -1
+        self.back_camera = get_orthographic_camera(back_mv, self.height, self.width, cano_center.device)
+
     def generate_mean_hands(self):
         # print('# Generating mean hands ...')
         import glob
@@ -294,39 +315,15 @@ class AvatarNet(nn.Module):
         return live_pos_map
 
     def depth_map_to_pos_map(self, depth_map, mask, return_map=False):
-        height = depth_map.shape[0]
-        width = depth_map.shape[1] // 2
-        assert height == width
-        # prepare front and back cameras
-        cano_smpl_v = self.cano_gaussian_model.get_xyz.cpu().detach().numpy()
-        cano_center = 0.5 * (cano_smpl_v.min(0) + cano_smpl_v.max(0))
-        cano_center = torch.from_numpy(cano_center).to('cuda')
-
-        front_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
-        front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
-        front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
-        front_mv[1:3, :] *= -1
-        front_camera = get_orthographic_camera(front_mv, height, width, cano_center.device)
-
-        back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
-        rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
-        rot_y = torch.from_numpy(rot_y).to(cano_center.device)
-        back_mv[:3, :3] = rot_y
-        back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
-
-        back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
-        back_mv[1:3] *= -1
-        back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
-
         depth_front = depth_map[:, :1024]
         depth_back = depth_map[:, 1024:]
 
         # mask_front = mask[:, :1024]
         # mask_back = mask[:, 1024:]
 
-        points_world_front = self.depth_to_position(front_camera, depth_front)
+        points_world_front = self.depth_to_position(self.front_camera, depth_front)
 
-        points_world_back = self.depth_to_position(back_camera, depth_back)
+        points_world_back = self.depth_to_position(self.back_camera, depth_back)
 
         position_map = torch.cat([points_world_front, points_world_back], dim=1)
 
