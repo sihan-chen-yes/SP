@@ -51,9 +51,9 @@ class AvatarNet(nn.Module):
         cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)
         # self.cano_template_mask = torch.linalg.norm(self.cano_template_map, dim = -1) > 0.
-        self.cano_template_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
+        # self.cano_template_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
         self.cano_template_init_points = self.cano_template_map[self.cano_template_mask]
-        self.cano_template_gaussian_model.create_from_pcd(self.cano_template_init_points, torch.rand_like(self.cano_template_init_points), spatial_lr_scale = 2.5)
+        # self.cano_template_gaussian_model.create_from_pcd(self.cano_template_init_points, torch.rand_like(self.cano_template_init_points), spatial_lr_scale = 2.5)
 
         # get orthographic projected depth map
         self.height, self.width = 1024, 1024
@@ -94,7 +94,7 @@ class AvatarNet(nn.Module):
             )
 
         # prepare front and back cameras
-        cano_smpl_v = self.cano_gaussian_model.get_xyz.cpu().detach().numpy()
+        cano_smpl_v = self.cano_init_points.cpu().detach().numpy()
         cano_center = 0.5 * (cano_smpl_v.min(0) + cano_smpl_v.max(0))
         cano_center = torch.from_numpy(cano_center).to('cuda')
 
@@ -180,9 +180,14 @@ class AvatarNet(nn.Module):
         others = other_map[mask]  # (N, 8)
 
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
-        opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
-        scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
-        rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
+        # predict absolute value
+        opacity = self.cano_gaussian_model.opacity_activation(opacity)
+        scales = self.cano_gaussian_model.scaling_activation(scales)
+        rotations = self.cano_gaussian_model.rotation_activation(rotations)
+
+        # opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
+        # scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
+        # rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
 
         return opacity, scales, rotations
 
@@ -305,7 +310,7 @@ class AvatarNet(nn.Module):
 
     def get_pose_map(self, items):
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats_woRoot'])
-        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_gaussian_model.get_init_pts()) + pt_mats[..., :3, 3]
+        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_init_points) + pt_mats[..., :3, 3]
         live_pos_map = torch.zeros_like(self.cano_smpl_map)
         live_pos_map[self.cano_smpl_mask] = live_pts
         live_pos_map = F.interpolate(live_pos_map.permute(2, 0, 1)[None], None, [0.5, 0.5], mode = 'nearest')[0]
@@ -437,16 +442,20 @@ class AvatarNet(nn.Module):
         # predicted_mask = self.get_mask(pose_map)
         # use depth map predicted from 2D pose map
         predicted_depth_map = self.get_predicted_depth_map(pose_map)
-        predicted_mask = predicted_depth_map > 0
+        predicted_mask = self.get_mask(pose_map)
         if pretrain:
-            if template:
-                # pretrain on clothed template
-                mask = predicted_depth_map > 0
-                depth_map = predicted_depth_map
-            else:
-                # pretrain on smplx
-                mask = self.cano_smpl_mask
-                depth_map = self.cano_smpl_depth_map
+            mask = predicted_mask > 0.5
+            depth_map = predicted_depth_map
+
+            # if template:
+            #     # pretrain on clothed template
+            #     mask = predicted_mask > 0.5
+            #     depth_map = predicted_depth_map
+            # else:
+            #     # pretrain on smplx
+            #     mask = self.cano_smpl_mask
+            #     depth_map = self.cano_smpl_depth_map
+
             cano_pts, pos_map = self.depth_map_to_pos_map(depth_map, mask, return_map=True)
             opacity, scales, rotations = self.get_others(pose_map, mask)
             colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
@@ -455,7 +464,7 @@ class AvatarNet(nn.Module):
             # TODO threshold
             mask = predicted_mask > 0.5
 
-            self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask], torch.rand_like(self.cano_smpl_map[mask]), spatial_lr_scale=2.5)
+            # self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask], torch.rand_like(self.cano_smpl_map[mask]), spatial_lr_scale=2.5)
             # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
             cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask, return_map=True)
 
