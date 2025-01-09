@@ -412,7 +412,8 @@ class AvatarTrainer:
                     self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts, template=template)
 
                 if self.iter_idx == 5000:
-                    model_folder = self.opt['train']['net_ckpt_dir'] + '/pretrained'
+                    model_folder = self.opt['train']['net_ckpt_dir']
+                    model_folder += '/pretrained_template' if template else '/pretrained_smpl'
                     os.makedirs(model_folder, exist_ok = True)
                     self.save_ckpt(model_folder, save_optm = True)
                     self.iter_idx = 0
@@ -582,7 +583,8 @@ class AvatarTrainer:
         if not pretraining:
             output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/training'
         else:
-            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval_pretrain/training'
+            output_dir = self.opt['train']['net_ckpt_dir']
+            output_dir += '/eval_pretrain_template/training' if template else '/eval_pretrain_smpl/training'
         gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
         if gt_image is not None:
             gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
@@ -619,7 +621,8 @@ class AvatarTrainer:
         if not pretraining:
             output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/testing'
         else:
-            output_dir = self.opt['train']['net_ckpt_dir'] + '/eval_pretrain/testing'
+            output_dir = self.opt['train']['net_ckpt_dir']
+            output_dir += '/eval_pretrain_template/testing' if template else '/eval_pretrain_smpl/testing'
         gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
         if gt_image is not None:
             gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
@@ -634,7 +637,7 @@ class AvatarTrainer:
         # export mask
         predicted_mask = gs_render["predicted_mask"].cpu().numpy()
         predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
-        predicted_depth_map = colormap(gs_render["predicted_depth_map"].cpu()).numpy()
+        predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
 
         os.makedirs(output_dir + '/predicted', exist_ok=True)
         cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
@@ -999,7 +1002,7 @@ if __name__ == '__main__':
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # for decoder learning
             trainer.pretrain()
-        elif not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
+        if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # finetune on template
