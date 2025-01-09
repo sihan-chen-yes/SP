@@ -178,43 +178,8 @@ class AvatarTrainer:
             'UV_mask_loss': mask_loss.item()
         })
 
-        #  debug
-        # with torch.no_grad():
-        #     # orthographic projected depth map
-        #     cano_smpl_depth_map = self.avatar_net.cano_smpl_depth_map
-        #
-        #     # depth to position
-        #     mask = cano_smpl_depth_map > 0
-        #
-        #     position = self.avatar_net.depth_map_to_pos_map(cano_smpl_depth_map, mask)
-        #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/", exist_ok=True)
-        #     save_mesh_as_ply('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/iter_debug.ply', position.cpu().numpy())
-        #
-        #     # save depth map from canonical template
-        #     cano_smpl_depth_map = cano_smpl_depth_map.cpu().numpy()
-        #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template", exist_ok=True)
-        #
-        #     cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.exr', cano_smpl_depth_map)
-
-         # debug template
-        # with torch.no_grad():
-        #     # orthographic projected depth map
-        #     cano_template_depth_map = self.avatar_net.cano_template_depth_map
-        #
-        #     # depth to position
-        #     mask = cano_template_depth_map > 0
-        #     # mask = self.avatar_net.cano_smpl_mask > 0
-        #
-        #
-        #     position = self.avatar_net.depth_map_to_pos_map(cano_template_depth_map, mask)
-        #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/", exist_ok=True)
-        #     save_mesh_as_ply('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/cano_pts/iter_debug.ply', position.cpu().numpy())
-        #
-        #     # save depth map from canonical template
-        #     cano_template_depth_map = cano_template_depth_map.cpu().numpy()
-        #     os.makedirs("./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template", exist_ok=True)
-
-            # cv.imwrite('./results/avatarrex_lbn1/avatar/eval_pretrain/testing/template/template_depth_map_debug.jpg', cano_template_depth_map)
+        #  dev
+        # self.avatar_net.gen_depth_map()
 
         # predicted depth map loss
         cano_smpl_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
