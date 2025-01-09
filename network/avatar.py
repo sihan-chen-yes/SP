@@ -217,7 +217,8 @@ class AvatarNet(nn.Module):
         front_map, back_map = torch.split(depth_map, [1, 1], 1)
         depth_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
         # clamp negative depth
-        depth_map = torch.clamp(depth_map, min=0)
+        # depth_map = torch.clamp(depth_map, min=0)
+        depth_map = torch.nn.functional.softplus(depth_map)
         return depth_map
 
     # def get_interpolated_feat(self, pose_map):
