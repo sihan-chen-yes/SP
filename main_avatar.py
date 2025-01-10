@@ -174,7 +174,7 @@ class AvatarTrainer:
                 'rotation': rotation_loss.item()
             })
 
-        total_loss += position_loss
+        #total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
         })

@@ -914,3 +914,25 @@ class DualStyleUNet(nn.Module):
             return images, latent
         else:
             return images, None
+
+class SimpleNet(nn.Module):
+    def __init__(self):
+        super(SimpleNet, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.decoder = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1),
+        )
+        self.upsampler = nn.ConvTranspose2d(1, 1, kernel_size=2, stride=2)
+
+    def forward(self, x):
+        x = self.encoder(x) 
+        x = self.decoder(x)
+        x = self.upsampler(x)
+        return x
