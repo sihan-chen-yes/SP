@@ -597,7 +597,8 @@ class StyledConv(nn.Module):
 
     def forward(self, input, style, noise=None):
         out = self.conv(input, style)
-        out = self.noise(out, noise=noise)
+        # out = self.noise(out, noise=noise)
+        # out = self.noise(out, noise=noise)
         # out = out + self.bias
         out = self.activate(out)
 
@@ -874,8 +875,10 @@ class DualStyleUNet(nn.Module):
             elif i < 2 * len(self.comb_convs):
                 out = torch.cat([out, cond_list[-1 - (i // 2)]], dim=1)
                 out = self.comb_convs[-1 - (i // 2)](out)
-            out = conv1(out, latent[:, i], noise=noise1)
-            out = conv2(out, latent[:, i + 1], noise=noise2)
+            # out = conv1(out, latent[:, i], noise=noise1)
+            # out = conv2(out, latent[:, i + 1], noise=noise2)
+            out = conv1(out, latent[:, i])
+            out = conv2(out, latent[:, i + 1])
             skip = to_rgb(out, latent[:, i + 2], skip)
             # print(i, out.shape, skip.shape)
             if view_feature1 is not None and i == 8:
@@ -894,8 +897,10 @@ class DualStyleUNet(nn.Module):
             elif i < 2 * len(self.comb_convs):
                 out = torch.cat([out, cond_list[-1 - (i // 2)]], dim=1)
                 out = self.comb_convs[-1 - (i // 2)](out)
-            out = conv1(out, latent[:, i], noise=noise1)
-            out = conv2(out, latent[:, i + 1], noise=noise2)
+            # out = conv1(out, latent[:, i], noise=noise1)
+            # out = conv2(out, latent[:, i + 1], noise=noise2)
+            out = conv1(out, latent[:, i])
+            out = conv2(out, latent[:, i + 1])
             skip = to_rgb(out, latent[:, i + 2], skip)
             if view_feature2 is not None and i == 8:
                 view_feature2 = F.interpolate(view_feature2, out.shape[-2:], mode = 'bilinear')  # (B, 128, 256. 256)
