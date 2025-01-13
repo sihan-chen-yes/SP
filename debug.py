@@ -37,7 +37,15 @@ cano_smpl_depth_map = cv.imread('../avatarrex/lbn1/smpl_depth_map/cano_smpl_dept
                                 cv.IMREAD_UNCHANGED)
 gt_cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(device)
 gt_cano_smpl_mask = gt_cano_smpl_depth_map > 0.
-gt_cano_smpl_depth_map[gt_cano_smpl_mask] = gt_cano_smpl_depth_map[gt_cano_smpl_mask] - 10.0
+gt_cano_smpl_depth_map[gt_cano_smpl_mask] = gt_cano_smpl_depth_map[gt_cano_smpl_mask] - 10
+
+gt_cano_smpl_depth_map_max = gt_cano_smpl_depth_map[gt_cano_smpl_mask].max()
+gt_cano_smpl_depth_map_min = gt_cano_smpl_depth_map[gt_cano_smpl_mask].min()
+# to [0,1]
+gt_cano_smpl_depth_map[gt_cano_smpl_mask] = (gt_cano_smpl_depth_map[gt_cano_smpl_mask] - gt_cano_smpl_depth_map_min) / (gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min)
+#[0,1] -> [-1,1]
+gt_cano_smpl_depth_map[gt_cano_smpl_mask] = gt_cano_smpl_depth_map[gt_cano_smpl_mask] * 2 - 1
+
 cano_smpl_map = cv.imread('../avatarrex/lbn1/smpl_pos_map/cano_smpl_pos_map.exr',
                           cv.IMREAD_UNCHANGED)
 cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(device)
@@ -83,6 +91,7 @@ def get_predicted_depth_map(pose_map):
     # clamp negative depth
     # depth_map = torch.clamp(depth_map, min=0)
     # depth_map = torch.nn.functional.softplus(depth_map)
+    depth_map = torch.nn.functional.tanh(depth_map)
     return depth_map
 
 def get_mask(pose_map):
@@ -160,6 +169,10 @@ if __name__ == '__main__':
             items = net_util.delete_batch_idx(items)
             pose_map = items['smpl_pos_map'][:3]
 
+            # TODO no influence
+            # pose_mask = pose_map > 0
+            # pose_map[pose_mask] = (pose_map[pose_mask] - pose_map.min()) / (pose_map.max() - pose_map.min())
+
             predicted_mask = get_mask(pose_map)
             predicted_depth = get_predicted_depth_map(pose_map)
 
@@ -214,7 +227,9 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     if eval_cano_pts:
                         mask = predicted_mask > 0.5
-                        predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
+                        # predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
+                        predicted_depth[gt_cano_smpl_mask] = (predicted_depth[gt_cano_smpl_mask] + 1) / 2
+                        predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] * (gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min) + gt_cano_smpl_depth_map_min + 10
                         position = depth_map_to_pos_map(predicted_depth, mask)
 
                         save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % iter_idx,
