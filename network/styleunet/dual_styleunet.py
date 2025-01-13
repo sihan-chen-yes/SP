@@ -927,9 +927,9 @@ class SimpleNet(nn.Module):
         self.decoder = nn.Sequential(
             nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
         )
-        self.upsampler = nn.ConvTranspose2d(1, 1, kernel_size=2, stride=2)
+        self.upsampler = nn.ConvTranspose2d(32, 1, kernel_size=2, stride=2)
 
     def forward(self, x):
         x = self.encoder(x) 

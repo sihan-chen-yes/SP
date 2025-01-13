@@ -27,7 +27,7 @@ all_params = (list(front_mask_net.parameters()) +
               list(front_depth_net.parameters()) +
               list(back_depth_net.parameters()))
 optm = torch.optim.Adam(
-    all_params, lr=5e-3
+    all_params, lr=5e-4
 )
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optm, 'min', patience=50, threshold=1e-3,
                                                             cooldown=50, factor=0.9)
@@ -37,6 +37,7 @@ cano_smpl_depth_map = cv.imread('../avatarrex/lbn1/smpl_depth_map/cano_smpl_dept
                                 cv.IMREAD_UNCHANGED)
 gt_cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(device)
 gt_cano_smpl_mask = gt_cano_smpl_depth_map > 0.
+gt_cano_smpl_depth_map[gt_cano_smpl_mask] = gt_cano_smpl_depth_map[gt_cano_smpl_mask] - 10.0
 cano_smpl_map = cv.imread('../avatarrex/lbn1/smpl_pos_map/cano_smpl_pos_map.exr',
                           cv.IMREAD_UNCHANGED)
 cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(device)
@@ -81,7 +82,7 @@ def get_predicted_depth_map(pose_map):
     depth_map = torch.cat([front_depth_map, back_depth_map], 2).permute(1, 2, 0).squeeze()
     # clamp negative depth
     # depth_map = torch.clamp(depth_map, min=0)
-    depth_map = torch.nn.functional.softplus(depth_map)
+    # depth_map = torch.nn.functional.softplus(depth_map)
     return depth_map
 
 def get_mask(pose_map):
@@ -213,6 +214,7 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     if eval_cano_pts:
                         mask = predicted_mask > 0.5
+                        predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
                         position = depth_map_to_pos_map(predicted_depth, mask)
 
                         save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % iter_idx,
