@@ -4,7 +4,7 @@ import torch
 from utils.net_util import to_cuda
 import cv2 as cv
 import torch.nn as nn
-from network.styleunet.dual_styleunet import SimpleNet
+from network.styleunet.dual_styleunet import SimpleNet, SimpleSegNet
 import torch.nn.functional as F
 import os
 import utils.net_util as net_util
@@ -20,8 +20,10 @@ os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 front_mask_net = SimpleNet().to(device)
 back_mask_net = SimpleNet().to(device)
-front_depth_net = SimpleNet().to(device)
-back_depth_net = SimpleNet().to(device)
+num_segments = 32
+
+front_depth_net = SimpleSegNet().to(device)
+back_depth_net = SimpleSegNet().to(device)
 all_params = (list(front_mask_net.parameters()) +
               list(back_mask_net.parameters()) +
               list(front_depth_net.parameters()) +
@@ -87,11 +89,20 @@ back_camera = get_orthographic_camera(back_mv, 1024, 1024, cano_center.device)
 def get_predicted_depth_map(pose_map):
     front_depth_map = front_depth_net(pose_map)
     back_depth_map = back_depth_net(pose_map)
-    depth_map = torch.cat([front_depth_map, back_depth_map], 2).permute(1, 2, 0).squeeze()
+    depth_probs = torch.cat([front_depth_map, back_depth_map], 2).permute(1, 2, 0).squeeze()
     # clamp negative depth
     # depth_map = torch.clamp(depth_map, min=0)
     # depth_map = torch.nn.functional.softplus(depth_map)
-    depth_map = torch.nn.functional.tanh(depth_map)
+    # depth_map = torch.nn.functional.tanh(depth_map)
+    device = depth_probs.device
+    midpoints = torch.linspace(0, num_segments - 1, num_segments, device=device)  # (32,)
+    midpoints = -1 + (midpoints + 0.5) * (2.0 / num_segments)  # (32,)
+
+    midpoints = midpoints.view(1, 1, num_segments)
+
+    depth_map = torch.sum(depth_probs * midpoints, dim=-1)  # shape (H, W)
+
+    depth_map[~gt_cano_smpl_mask] = 0.0
     return depth_map
 
 def get_mask(pose_map):
@@ -225,11 +236,13 @@ if __name__ == '__main__':
                 else:
                     eval_cano_pts = False
                 with torch.no_grad():
+                    mask = predicted_mask > 0.5
+                    # predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
+                    predicted_depth[gt_cano_smpl_mask] = (predicted_depth[gt_cano_smpl_mask] + 1) / 2
+                    predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] * (
+                                gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min) + gt_cano_smpl_depth_map_min + 10
+
                     if eval_cano_pts:
-                        mask = predicted_mask > 0.5
-                        # predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
-                        predicted_depth[gt_cano_smpl_mask] = (predicted_depth[gt_cano_smpl_mask] + 1) / 2
-                        predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] * (gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min) + gt_cano_smpl_depth_map_min + 10
                         position = depth_map_to_pos_map(predicted_depth, mask)
 
                         save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % iter_idx,
