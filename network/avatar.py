@@ -182,7 +182,7 @@ class AvatarNet(nn.Module):
     #     else:
     #         return positions
 
-    def get_others(self, pose_map, mask):
+    def get_others(self, pose_map, mask, return_map = False):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
         front_map, back_map = torch.split(other_map, [8, 8], 1)
         other_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
@@ -199,7 +199,12 @@ class AvatarNet(nn.Module):
         # scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
         # rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
 
-        return opacity, scales, rotations
+        # opacity_map
+        opacity_map = self.cano_gaussian_model.opacity_activation(other_map[:, :, 0])
+        if return_map:
+            return opacity, scales, rotations, opacity_map
+        else:
+            return opacity, scales, rotations
 
     def get_colors(self, pose_map, mask, front_viewdirs = None, back_viewdirs = None):
         color_style = torch.rand_like(self.color_style) if self.random_style and self.training else self.color_style
@@ -474,7 +479,7 @@ class AvatarNet(nn.Module):
             #     depth_map = self.cano_smpl_depth_map
 
             cano_pts, pos_map = self.depth_map_to_pos_map(depth_map, self.cano_smpl_mask, return_map=True)
-            opacity, scales, rotations = self.get_others(pose_map, self.cano_smpl_mask)
+            opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
         else:
             # update cano gs
@@ -483,7 +488,7 @@ class AvatarNet(nn.Module):
             # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
             cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True)
 
-            opacity, scales, rotations = self.get_others(pose_map, self.bounding_mask)
+            opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             # smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
 
@@ -605,7 +610,7 @@ class AvatarNet(nn.Module):
             # 'template_mask_map': template_mask_map,
             # 'template_depth_map': template_depth_map,
             # 'cano_template_depth_map': cano_template_depth_map,
-            # "predicted_mask": predicted_mask,
+            "predicted_mask": opacity_map,
             "cano_pts": cano_pts,
             'predicted_depth_map': predicted_depth_map,
 

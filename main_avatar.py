@@ -451,8 +451,8 @@ class AvatarTrainer:
             else:
                 if safe_exists(self.opt['train']['pretrained_dir']):
                     self.load_ckpt(self.opt['train']['pretrained_dir'], load_optm = False)
-                elif safe_exists(self.opt['train']['net_ckpt_dir'] + '/pretrained'):
-                    self.load_ckpt(self.opt['train']['net_ckpt_dir'] + '/pretrained', load_optm = False)
+                elif safe_exists(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl'):
+                    self.load_ckpt(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl', load_optm = False)
                 else:
                     raise FileNotFoundError('Cannot find pretrained checkpoint!')
 
@@ -636,12 +636,12 @@ class AvatarTrainer:
 
 
         # export mask
-        # predicted_mask = gs_render["predicted_mask"].cpu().numpy()
-        # predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
+        predicted_mask = gs_render["predicted_mask"].cpu().numpy()
+        predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
         predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
 
         os.makedirs(output_dir + '/predicted', exist_ok=True)
-        # cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
+        cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
         cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.jpg' % self.iter_idx, predicted_depth_map)
 
         # export pos map
@@ -670,10 +670,10 @@ class AvatarTrainer:
 
         # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
         # template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
-        cano_template_ort_depth_map = colormap(self.avatar_net.cano_template_depth_map.cpu()).numpy()
+        # cano_template_ort_depth_map = colormap(self.avatar_net.cano_template_depth_map.cpu()).numpy()
         # cano_depth_map = colormap(gs_render["cano_depth_map"].cpu()).numpy()
         depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
-        cano_ort_depth_map = colormap(self.avatar_net.cano_smpl_depth_map.cpu()).numpy()
+        # cano_ort_depth_map = colormap(self.avatar_net.cano_smpl_depth_map.cpu()).numpy()
 
 
         # cv.imwrite(output_dir + '/template/cano_template_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_depth_map)
