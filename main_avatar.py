@@ -152,10 +152,11 @@ class AvatarTrainer:
             position_loss = chamfer_loss(position, self.avatar_net.cano_template_init_points)
         else:
             # use smplx 3d pts to supervise
-            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, self.avatar_net.cano_smpl_mask)
-            position_loss = chamfer_loss(position, self.avatar_net.cano_init_points)
-
-            opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.cano_smpl_mask)
+            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask)
+            target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
+            position_loss = chamfer_loss(position[target_region],
+                                         self.avatar_net.cano_init_points[target_region])
+            opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
             opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
             total_loss += opacity_loss
             batch_losses.update({
@@ -197,15 +198,15 @@ class AvatarTrainer:
             })
         else:
             # supervise when pretraining on smplx
-            mask_loss = F.binary_cross_entropy(predicted_mask, self.avatar_net.cano_smpl_mask.float())
-            total_loss += mask_loss
+            # mask_loss = F.binary_cross_entropy(predicted_mask, self.avatar_net.cano_smpl_mask.float())
+            # total_loss += mask_loss
 
             cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
             total_loss += cano_depth_loss
 
-            batch_losses.update({
-                'smpl_predicted_mask_loss': mask_loss.item()
-            })
+            # batch_losses.update({
+            #     'smpl_predicted_mask_loss': mask_loss.item()
+            # })
 
             batch_losses.update({
                 'cano_smpl_predicted_depth_loss': cano_depth_loss.item()
@@ -279,23 +280,23 @@ class AvatarTrainer:
                 'mask_loss': mask_loss.item(),
             })
 
-        if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
-            depth_map = render_output['depth_map'].squeeze(-1)
-            template_depth = render_output['template_depth_map'].squeeze(-1)
-            template_depth_loss = torch.abs(depth_map - template_depth).mean()
-            total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
-            batch_losses.update({
-                'template_depth_loss': template_depth_loss.item()
-            })
-
-        if self.loss_weight.get('predicted_depth', 0.) and 'predicted_depth_map' in render_output:
-            predicted_depth_map = render_output['predicted_depth_map'].squeeze(-1)
-            template_depth_map = self.avatar_net.cano_template_depth_map
-            cano_template_depth_loss = torch.abs(predicted_depth_map - template_depth_map).mean()
-            total_loss += self.loss_weight.get('predicted_depth', 0.) * cano_template_depth_loss
-            batch_losses.update({
-                'cano_predicted_depth_loss': cano_template_depth_loss.item()
-            })
+        # if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
+        #     depth_map = render_output['depth_map'].squeeze(-1)
+        #     template_depth = render_output['template_depth_map'].squeeze(-1)
+        #     template_depth_loss = torch.abs(depth_map - template_depth).mean()
+        #     total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
+        #     batch_losses.update({
+        #         'template_depth_loss': template_depth_loss.item()
+        #     })
+        #
+        # if self.loss_weight.get('predicted_depth', 0.) and 'predicted_depth_map' in render_output:
+        #     predicted_depth_map = render_output['predicted_depth_map'].squeeze(-1)
+        #     template_depth_map = self.avatar_net.cano_template_depth_map
+        #     cano_template_depth_loss = torch.abs(predicted_depth_map - template_depth_map).mean()
+        #     total_loss += self.loss_weight.get('predicted_depth', 0.) * cano_template_depth_loss
+        #     batch_losses.update({
+        #         'cano_predicted_depth_loss': cano_template_depth_loss.item()
+        #     })
 
         if self.loss_weight['lpips'] > 0.:
             # crop images
@@ -635,12 +636,12 @@ class AvatarTrainer:
 
 
         # export mask
-        predicted_mask = gs_render["predicted_mask"].cpu().numpy()
-        predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
+        # predicted_mask = gs_render["predicted_mask"].cpu().numpy()
+        # predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
         predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
 
         os.makedirs(output_dir + '/predicted', exist_ok=True)
-        cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
+        # cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
         cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.jpg' % self.iter_idx, predicted_depth_map)
 
         # export pos map
@@ -668,7 +669,7 @@ class AvatarTrainer:
         os.makedirs(output_dir + '/template', exist_ok=True)
 
         # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
-        template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
+        # template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
         cano_template_ort_depth_map = colormap(self.avatar_net.cano_template_depth_map.cpu()).numpy()
         # cano_depth_map = colormap(gs_render["cano_depth_map"].cpu()).numpy()
         depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
@@ -676,7 +677,7 @@ class AvatarTrainer:
 
 
         # cv.imwrite(output_dir + '/template/cano_template_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_depth_map)
-        cv.imwrite(output_dir + '/template/template_depth_map_iter_%d.jpg' % self.iter_idx, template_depth_map)
+        # cv.imwrite(output_dir + '/template/template_depth_map_iter_%d.jpg' % self.iter_idx, template_depth_map)
         # cv.imwrite(output_dir + '/template/cano_template_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_ort_depth_map)
 
         os.makedirs(output_dir + '/train', exist_ok=True)
@@ -1002,11 +1003,11 @@ if __name__ == '__main__':
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # for decoder learning
             trainer.pretrain()
-        if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
-                and not safe_exists(config.opt['train']['pretrained_dir'])\
-                and not safe_exists(config.opt['train']['prev_ckpt']):
-            # finetune on template
-            trainer.pretrain(template=True)
+        # if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
+        #         and not safe_exists(config.opt['train']['pretrained_dir'])\
+        #         and not safe_exists(config.opt['train']['prev_ckpt']):
+        #     # finetune on template
+        #     trainer.pretrain(template=True)
         trainer.train()
     elif config.opt['mode'] == 'test':
         trainer.test()

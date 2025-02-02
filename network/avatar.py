@@ -50,9 +50,12 @@ class AvatarNet(nn.Module):
         cano_smpl_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
         # self.cano_smpl_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
-        self.cano_init_points = self.cano_smpl_map[self.cano_smpl_mask]
+        self.bounding_mask = self.gen_bounding_mask()
+
+        self.cano_init_points = self.cano_smpl_map[self.bounding_mask]
         self.lbs_init_points = self.cano_smpl_map[torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0]
-        self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), spatial_lr_scale = 2.5)
+        self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), spatial_lr_scale = 2.5,
+                                                 mask = self.cano_smpl_mask[self.bounding_mask])
 
         cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)
@@ -92,7 +95,7 @@ class AvatarNet(nn.Module):
         if self.with_viewdirs:
             cano_nml_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map/cano_smpl_nml_map.exr', cv.IMREAD_UNCHANGED)
             self.cano_nml_map = torch.from_numpy(cano_nml_map).to(torch.float32).to(config.device)
-            self.cano_nmls = self.cano_nml_map[self.cano_smpl_mask]
+            self.cano_nmls = self.cano_nml_map[self.bounding_mask]
             self.viewdir_net = nn.Sequential(
                 nn.Conv2d(1, 64, 4, 2, 1),
                 nn.LeakyReLU(0.2, inplace = True),
@@ -184,13 +187,14 @@ class AvatarNet(nn.Module):
         front_map, back_map = torch.split(other_map, [8, 8], 1)
         other_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
         others = other_map[mask]  # (N, 8)
+        # others = other_map.view(-1, 8)  # (N, 8)
 
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
         # predict absolute value
         opacity = self.cano_gaussian_model.opacity_activation(opacity)
         scales = self.cano_gaussian_model.scaling_activation(scales)
         rotations = self.cano_gaussian_model.rotation_activation(rotations)
-
+        # TODO
         # opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
         # scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
         # rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
@@ -313,7 +317,7 @@ class AvatarNet(nn.Module):
             viewdirs = (live_nmls * viewdirs).sum(-1)
 
             viewdirs_map = torch.zeros(*self.cano_nml_map.shape[:2]).to(viewdirs)
-            viewdirs_map[self.cano_smpl_mask] = viewdirs
+            viewdirs_map[self.bounding_mask] = viewdirs
 
             viewdirs_map = viewdirs_map[None, None]
             viewdirs_map = F.interpolate(viewdirs_map, None, 0.5, 'nearest')
@@ -350,6 +354,7 @@ class AvatarNet(nn.Module):
 
         # mask = torch.cat([mask_front, mask_back], dim=1)
         positions = position_map[mask]
+        # positions = position_map.view(-1, 3)
 
         if return_map:
             return positions, position_map
@@ -454,12 +459,9 @@ class AvatarNet(nn.Module):
         else:
             front_viewdirs, back_viewdirs = None, None
 
-        # predicted_mask = self.get_mask(pose_map)
         # use depth map predicted from 2D pose map
         predicted_depth_map = self.get_predicted_depth_map(pose_map)
-        predicted_mask = self.get_mask(pose_map)
         if pretrain:
-            mask = predicted_mask > 0.5
             depth_map = predicted_depth_map
 
             # if template:
@@ -471,20 +473,18 @@ class AvatarNet(nn.Module):
             #     mask = self.cano_smpl_mask
             #     depth_map = self.cano_smpl_depth_map
 
-            cano_pts, pos_map = self.depth_map_to_pos_map(depth_map, mask, return_map=True)
-            opacity, scales, rotations = self.get_others(pose_map, mask)
-            colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
+            cano_pts, pos_map = self.depth_map_to_pos_map(depth_map, self.cano_smpl_mask, return_map=True)
+            opacity, scales, rotations = self.get_others(pose_map, self.cano_smpl_mask)
+            colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
         else:
             # update cano gs
-            # TODO threshold
-            mask = predicted_mask > 0.5
 
             # self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask], torch.rand_like(self.cano_smpl_map[mask]), spatial_lr_scale=2.5)
             # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
-            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, mask, return_map=True)
+            cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True)
 
-            opacity, scales, rotations = self.get_others(pose_map, mask)
-            colors, color_map = self.get_colors(pose_map, mask, front_viewdirs, back_viewdirs)
+            opacity, scales, rotations = self.get_others(pose_map, self.bounding_mask)
+            colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             # smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
 
 
@@ -549,20 +549,20 @@ class AvatarNet(nn.Module):
         radii = render_ret['radii']
 
         # render template to supervise
-        template_positions = torch.tensor(self.template_points.vertices, dtype=torch.float, device="cuda")
-        dist2 = torch.clamp_min(knn_points(template_positions[None], template_positions[None], K = 4)[0][0, :, 1:].mean(-1), 0.0000001)
-        template_scales = torch.sqrt(dist2)[...,None].repeat(1, 3)
-        # quaternion
-        template_rotations = torch.zeros((template_positions.shape[0], 4), dtype=torch.float, device="cuda")
-        template_rotations[:, 0] = 1
-        template_gaussian_vals = {
-            'positions': template_positions,
-            'opacity': torch.ones((template_positions.shape[0], 1), dtype=torch.float, device="cuda"),
-            'scales': template_scales,
-            'rotations': template_rotations,
-            'colors': torch.ones((template_positions.shape[0], 3), dtype=torch.float, device="cuda"),
-            'max_sh_degree': self.max_sh_degree
-        }
+        # template_positions = torch.tensor(self.template_points.vertices, dtype=torch.float, device="cuda")
+        # dist2 = torch.clamp_min(knn_points(template_positions[None], template_positions[None], K = 4)[0][0, :, 1:].mean(-1), 0.0000001)
+        # template_scales = torch.sqrt(dist2)[...,None].repeat(1, 3)
+        # # quaternion
+        # template_rotations = torch.zeros((template_positions.shape[0], 4), dtype=torch.float, device="cuda")
+        # template_rotations[:, 0] = 1
+        # template_gaussian_vals = {
+        #     'positions': template_positions,
+        #     'opacity': torch.ones((template_positions.shape[0], 1), dtype=torch.float, device="cuda"),
+        #     'scales': template_scales,
+        #     'rotations': template_rotations,
+        #     'colors': torch.ones((template_positions.shape[0], 3), dtype=torch.float, device="cuda"),
+        #     'max_sh_degree': self.max_sh_degree
+        # }
 
         # template_render_ret = render3(
         #     template_gaussian_vals,
@@ -574,19 +574,19 @@ class AvatarNet(nn.Module):
         # )
         # cano_template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
-        template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
+        # template_gaussian_vals = self.transform_cano2live(template_gaussian_vals, items)
 
-        template_render_ret = render3(
-            template_gaussian_vals,
-            bg_color,
-            items['extr'],
-            items['intr'],
-            items['img_w'],
-            items['img_h']
-        )
-
-        template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
-        template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
+        # template_render_ret = render3(
+        #     template_gaussian_vals,
+        #     bg_color,
+        #     items['extr'],
+        #     items['intr'],
+        #     items['img_w'],
+        #     items['img_h']
+        # )
+        #
+        # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
+        # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
         ret = {
             'rgb_map': rgb_map,
@@ -603,9 +603,9 @@ class AvatarNet(nn.Module):
             "colors": colors,
             'pos_map': pos_map,
             # 'template_mask_map': template_mask_map,
-            'template_depth_map': template_depth_map,
+            # 'template_depth_map': template_depth_map,
             # 'cano_template_depth_map': cano_template_depth_map,
-            "predicted_mask": predicted_mask,
+            # "predicted_mask": predicted_mask,
             "cano_pts": cano_pts,
             'predicted_depth_map': predicted_depth_map,
 
@@ -618,11 +618,6 @@ class AvatarNet(nn.Module):
         #     })
 
         return ret
-
-    def get_depth_offset_normalized_map(self):
-        depth_offset_normalized_map = self.cano_smpl_depth_map
-
-        return self.cano_smpl_depth_map
 
     def get_orthographic_depth_map(self, gaussian_model):
         cano_v = gaussian_model.get_xyz.cpu().detach().numpy()
@@ -653,6 +648,16 @@ class AvatarNet(nn.Module):
         depth_map = torch.cat([front_depth, back_depth], dim=1)
 
         return depth_map
+
+    def gen_bounding_mask(self):
+        indices = torch.nonzero(self.cano_smpl_mask, as_tuple=False)
+        y_min, x_min = indices.min(dim=0)[0]
+        y_max, x_max = indices.max(dim=0)[0]
+        bounding_mask = self.cano_smpl_mask.clone()
+
+        bounding_mask[y_min:y_max + 1, x_min:x_max + 1] = True
+
+        return bounding_mask
 
     def gen_depth_map(self):
         # create pts from pose map
