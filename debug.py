@@ -41,8 +41,9 @@ gt_cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32)
 gt_cano_smpl_mask = gt_cano_smpl_depth_map > 0.
 gt_cano_smpl_depth_map[gt_cano_smpl_mask] = gt_cano_smpl_depth_map[gt_cano_smpl_mask] - 10
 
-gt_cano_smpl_depth_map_max = gt_cano_smpl_depth_map[gt_cano_smpl_mask].max()
-gt_cano_smpl_depth_map_min = gt_cano_smpl_depth_map[gt_cano_smpl_mask].min()
+enlarge_scale = 1.2
+gt_cano_smpl_depth_map_max = gt_cano_smpl_depth_map[gt_cano_smpl_mask].max() * enlarge_scale
+gt_cano_smpl_depth_map_min = gt_cano_smpl_depth_map[gt_cano_smpl_mask].min() * enlarge_scale
 # to [0,1]
 gt_cano_smpl_depth_map[gt_cano_smpl_mask] = (gt_cano_smpl_depth_map[gt_cano_smpl_mask] - gt_cano_smpl_depth_map_min) / (gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min)
 #[0,1] -> [-1,1]
@@ -237,7 +238,6 @@ if __name__ == '__main__':
                     eval_cano_pts = False
                 with torch.no_grad():
                     mask = predicted_mask > 0.5
-                    # predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] + 10
                     predicted_depth[gt_cano_smpl_mask] = (predicted_depth[gt_cano_smpl_mask] + 1) / 2
                     predicted_depth[gt_cano_smpl_mask] = predicted_depth[gt_cano_smpl_mask] * (
                                 gt_cano_smpl_depth_map_max - gt_cano_smpl_depth_map_min) + gt_cano_smpl_depth_map_min + 10
