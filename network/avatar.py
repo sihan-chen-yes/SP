@@ -37,12 +37,15 @@ class AvatarNet(nn.Module):
         self.cano_template_depth_map = torch.from_numpy(cano_template_depth_map).to(torch.float32).to(config.device)
         self.cano_smpl_mask = self.cano_smpl_depth_map > 0.
         self.cano_template_mask = self.cano_template_depth_map > 0.
+        # change background value to 10 by default
+        self.cano_smpl_depth_map[~self.cano_smpl_mask] = 10.0
+        self.cano_template_depth_map[~self.cano_template_mask] = 10.0
 
         # depth offset normalized
-        self.cano_smpl_depth_offset_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(config.device)
-        self.cano_smpl_depth_offset_map[self.cano_smpl_mask] = self.cano_smpl_depth_offset_map[self.cano_smpl_mask] - 10
-        self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map[self.cano_smpl_mask].max()
-        self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map[self.cano_smpl_mask].min()
+        self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
+        self.cano_smpl_depth_offset_map = self.cano_smpl_depth_offset_map - 10
+        self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max()
+        self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min()
 
         # init canonical gausssian model
         self.max_sh_degree = 0
@@ -245,8 +248,8 @@ class AvatarNet(nn.Module):
         depth_offset_map = self.get_predicted_depth_offset_map(pose_map)
         # recover depth offset to depth
         depth_map = depth_offset_map.clone()
-        depth_map[self.cano_smpl_mask] = (depth_map[self.cano_smpl_mask] + 1) / 2
-        depth_map[self.cano_smpl_mask] = (depth_map[self.cano_smpl_mask] * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
+        depth_map = (depth_map + 1) / 2
+        depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
                                                  + self.cano_smpl_depth_offset_map_min + 10)
         return depth_map
 
