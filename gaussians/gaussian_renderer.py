@@ -98,6 +98,7 @@ def render3(
     opacities = opacity.squeeze()
     viewmats = extr[None, :, :] #[C, 4, 4]
     Ks = intr[None, :, :] #[C, 3, 3]
+    backgrounds = bg_color.unsqueeze(0)
     #TODO ED or D?
     render, render_alpha, meta = rasterization(means=means3D,
                                                quats=rotations,
@@ -110,6 +111,7 @@ def render3(
                                                height=img_h,
                                                near_plane=0.1,
                                                far_plane=100,
+                                               backgrounds=backgrounds,
                                                render_mode="RGB+D")
     # remove batch dimension
     rendered_image = render.squeeze(0)[:, :, :3].permute(2, 0, 1)
