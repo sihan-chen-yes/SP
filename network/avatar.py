@@ -239,16 +239,15 @@ class AvatarNet(nn.Module):
         depth_offset_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
         front_map, back_map = torch.split(depth_offset_map, [1, 1], 1)
         depth_offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
-        # map to [-1, 1]
-        # 0 for background
-        depth_offset_map = torch.nn.functional.tanh(depth_offset_map)
+        # map to [0, 1]
+        # 10 for background
+        depth_offset_map = torch.nn.functional.sigmoid(depth_offset_map)
         return depth_offset_map
 
     def get_predicted_depth_map(self, pose_map):
         depth_offset_map = self.get_predicted_depth_offset_map(pose_map)
         # recover depth offset to depth
         depth_map = depth_offset_map.clone()
-        depth_map = (depth_map + 1) / 2
         depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
                                                  + self.cano_smpl_depth_offset_map_min + 10)
         return depth_map
