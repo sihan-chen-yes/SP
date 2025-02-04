@@ -14,7 +14,7 @@ import math
 from diff_gaussian_rasterization_depth_alpha import GaussianRasterizationSettings, GaussianRasterizer
 from utils.graphics_utils import focal2fov, getProjectionMatrix
 from utils.sh_utils import eval_sh
-
+from gsplat.rendering import rasterization
 
 def render3(
     gaussian_vals: dict,
@@ -51,22 +51,22 @@ def render3(
     full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
     camera_center = torch.linalg.inv(extr)[:3, 3]
 
-    raster_settings = GaussianRasterizationSettings(
-        image_height = img_h,
-        image_width = img_w,
-        tanfovx = tanfovx,
-        tanfovy = tanfovy,
-        bg = bg_color,
-        scale_modifier = scaling_modifier,
-        viewmatrix = world_view_transform,
-        projmatrix = full_proj_transform,
-        sh_degree = gaussian_vals['max_sh_degree'],
-        campos = camera_center,
-        prefiltered = False,
-        debug = False
-    )
+    # raster_settings = GaussianRasterizationSettings(
+    #     image_height = img_h,
+    #     image_width = img_w,
+    #     tanfovx = tanfovx,
+    #     tanfovy = tanfovy,
+    #     bg = bg_color,
+    #     scale_modifier = scaling_modifier,
+    #     viewmatrix = world_view_transform,
+    #     projmatrix = full_proj_transform,
+    #     sh_degree = gaussian_vals['max_sh_degree'],
+    #     campos = camera_center,
+    #     prefiltered = False,
+    #     debug = False
+    # )
 
-    rasterizer = GaussianRasterizer(raster_settings = raster_settings)
+    # rasterizer = GaussianRasterizer(raster_settings = raster_settings)
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -84,16 +84,39 @@ def render3(
     shs = None
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+    # rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
+    #     means3D = means3D,
+    #     means2D = means2D,
+    #     shs = shs,
+    #     colors_precomp = colors_precomp,
+    #     opacities = opacity,
+    #     scales = scales,
+    #     rotations = rotations,
+    #     cov3D_precomp = cov3D_precomp)
 
+    # gsplat backend
+    opacities = opacity.squeeze()
+    viewmats = extr[None, :, :] #[C, 4, 4]
+    Ks = intr[None, :, :] #[C, 3, 3]
+    #TODO ED or D?
+    render, render_alpha, meta = rasterization(means=means3D,
+                                               quats=rotations,
+                                               scales=scales,
+                                               opacities=opacities,
+                                               colors=colors_precomp,
+                                               viewmats=viewmats,
+                                               Ks=Ks,
+                                               width=img_w,
+                                               height=img_h,
+                                               near_plane=0.1,
+                                               far_plane=100,
+                                               render_mode="RGB+D")
+    # remove batch dimension
+    rendered_image = render.squeeze(0)[:, :, :3].permute(2, 0, 1)
+    rendered_depth = render.squeeze(0)[:, :, 3:].permute(2, 0, 1)
+    rendered_alpha = render_alpha.squeeze(0).permute(2, 0, 1)
+    radii = meta["radii"]
+    screenspace_points = meta["means2d"]
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {
