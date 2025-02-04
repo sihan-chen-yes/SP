@@ -112,6 +112,7 @@ def render3(
                                                near_plane=0.1,
                                                far_plane=100,
                                                backgrounds=backgrounds,
+                                               packed=False,
                                                render_mode="RGB+D")
     # remove batch dimension
     rendered_image = render.squeeze(0)[:, :, :3].permute(2, 0, 1)
