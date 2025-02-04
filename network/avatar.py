@@ -42,10 +42,10 @@ class AvatarNet(nn.Module):
         self.cano_template_depth_map[~self.cano_template_mask] = 10.0
 
         # depth offset normalized
-        self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
-        self.cano_smpl_depth_offset_map = self.cano_smpl_depth_offset_map - 10
-        self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max()
-        self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min()
+        # self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
+        # self.cano_smpl_depth_offset_map = self.cano_smpl_depth_offset_map - 10
+        # self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max()
+        # self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min()
 
         # init canonical gausssian model
         self.max_sh_degree = 0
@@ -245,11 +245,10 @@ class AvatarNet(nn.Module):
         return depth_offset_map
 
     def get_predicted_depth_map(self, pose_map):
-        depth_offset_map = self.get_predicted_depth_offset_map(pose_map)
-        # recover depth offset to depth
-        depth_map = depth_offset_map.clone()
-        depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
-                                                 + self.cano_smpl_depth_offset_map_min + 10)
+        depth_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
+        front_map, back_map = torch.split(depth_map, [1, 1], 1)
+        depth_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+
         return depth_map
 
     # def get_interpolated_feat(self, pose_map):
