@@ -636,21 +636,19 @@ class AvatarTrainer:
 
 
         # export mask
-        predicted_mask = gs_render["predicted_mask"].cpu().numpy()
-        predicted_mask_image = (predicted_mask * 255).astype(np.uint8)
+        predicted_mask_map = gs_render["predicted_mask"].cpu().numpy()
         predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
 
         os.makedirs(output_dir + '/predicted', exist_ok=True)
-        cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.jpg' % self.iter_idx, predicted_mask_image)
-        cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.jpg' % self.iter_idx, predicted_depth_map)
+        cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.exr' % self.iter_idx, predicted_mask_map)
+        cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.exr' % self.iter_idx, predicted_depth_map)
 
         # export pos map
         pos_map = gs_render["pos_map"].cpu().numpy()
         # normalize to [0,1]
-        pos_map_normalized = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
-        pos_map = (pos_map_normalized * 255).astype(np.uint8)
+        pos_map = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
         os.makedirs(output_dir + '/pos_map', exist_ok=True)
-        cv.imwrite(output_dir + '/pos_map/iter_%d.jpg' % self.iter_idx, pos_map)
+        cv.imwrite(output_dir + '/pos_map/iter_%d.exr' % self.iter_idx, pos_map)
 
         # uv = self.avatar_net.cano_gaussian_model.get_uv
         # pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
