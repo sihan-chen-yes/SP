@@ -665,7 +665,7 @@ class AvatarNet(nn.Module):
         y_max, x_max = indices.max(dim=0)[0]
         bounding_mask = self.cano_smpl_mask.clone()
 
-        bounding_mask[y_min:y_max + 1, x_min:x_max + 1] = True
+        bounding_mask[0:1024 + 1, 0:2048 + 1] = True
 
         return bounding_mask
 
