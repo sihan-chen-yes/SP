@@ -113,13 +113,13 @@ def render3(
                                                far_plane=100,
                                                backgrounds=backgrounds,
                                                packed=False,
-                                               render_mode="RGB+D")
+                                               render_mode="RGB+ED")
     # remove batch dimension
     rendered_image = render.squeeze(0)[:, :, :3].permute(2, 0, 1)
     rendered_depth = render.squeeze(0)[:, :, 3:].permute(2, 0, 1)
     rendered_alpha = render_alpha.squeeze(0).permute(2, 0, 1)
-    radii = meta["radii"]
-    screenspace_points = meta["means2d"]
+    radii = meta["radii"].squeeze()
+    screenspace_points = meta["means2d"].squeeze()
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {
