@@ -28,6 +28,7 @@ train:
     depth: 0.1
     predicted_depth: 0.1
     offset: 0.005
+    opacity: 0.1
   finetune_color: false
   batch_size: 1
   num_workers: 8

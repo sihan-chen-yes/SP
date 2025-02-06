@@ -40,7 +40,7 @@ class AvatarNet(nn.Module):
         # change background value to 10 by default
         self.cano_smpl_depth_map[~self.cano_smpl_mask] = 10.0
         self.cano_template_depth_map[~self.cano_template_mask] = 10.0
-
+        self.cano_smpl_opacity_map = self.cano_smpl_mask.to(torch.float32)
         # depth offset normalized
         self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
         self.cano_smpl_depth_offset_map = self.cano_smpl_depth_offset_map - 10

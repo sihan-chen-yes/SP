@@ -156,7 +156,8 @@ class AvatarTrainer:
             target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
             position_loss = chamfer_loss(position[target_region],
                                          self.avatar_net.cano_init_points[target_region])
-            opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
+
+            opacity, scales, rotations, opacity_map = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask, return_map=True)
             opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
             total_loss += opacity_loss
             batch_losses.update({
@@ -260,7 +261,7 @@ class AvatarTrainer:
         # cv.imshow('gt_image', gt_image.permute(1, 2, 0).cpu().numpy())
         # cv.waitKey(0)
 
-        if self.loss_weight['l1'] > 0.:
+        if self.loss_weight.get('l1', 0.) and 'rgb_map' in render_output:
             l1_loss = torch.abs(image - gt_image).mean()
             total_loss += self.loss_weight['l1'] * l1_loss
             batch_losses.update({
@@ -298,7 +299,7 @@ class AvatarTrainer:
         #         'cano_predicted_depth_loss': cano_template_depth_loss.item()
         #     })
 
-        if self.loss_weight['lpips'] > 0.:
+        if self.loss_weight.get('lpips', 0.) and 'rgb_map' in render_output:
             # crop images
             random_patch_flag = False if self.iter_idx < 300000 else True
             image, gt_image = self.crop_image(mask_img, self.patch_size, random_patch_flag, image, gt_image)
@@ -317,6 +318,16 @@ class AvatarTrainer:
         #     batch_losses.update({
         #         'offset_loss': offset_loss.item()
         #     })
+        if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output:
+            predicted_mask = render_output['predicted_mask']
+            smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
+            # regularization for smpl opacity
+            opacity_loss = torch.abs((predicted_mask - smpl_opacity_map)[self.avatar_net.cano_smpl_mask]).mean()
+            # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
+            total_loss += self.loss_weight.get('opacity', 0.) * opacity_loss
+            batch_losses.update({
+                'opacity_loss': opacity_loss.item(),
+            })
 
         # forward_end.record()
 
