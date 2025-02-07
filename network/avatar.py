@@ -618,7 +618,7 @@ class AvatarNet(nn.Module):
             "predicted_mask": opacity_map,
             "cano_pts": cano_pts,
             'predicted_depth_map': predicted_depth_map,
-
+            "scales": scales,
         }
 
         # if not self.training:

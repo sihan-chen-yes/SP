@@ -32,7 +32,7 @@ from pytorch3d.renderer import (
     OrthographicCameras,
 )
 from utils.graphics_utils import get_orthographic_camera
-from utils.losses import chamfer_loss
+from utils.losses import chamfer_loss, bound_loss
 def safe_exists(path):
     if path is None:
         return False
@@ -327,6 +327,15 @@ class AvatarTrainer:
             total_loss += self.loss_weight.get('opacity', 0.) * opacity_loss
             batch_losses.update({
                 'opacity_loss': opacity_loss.item(),
+            })
+
+        if self.loss_weight.get('scale', 0.) and 'scales' in render_output:
+            scales = render_output['scales']
+            # regularization for gaussian scales
+            scale_loss = bound_loss(scales)
+            total_loss += self.loss_weight.get('scale', 0.) * scale_loss
+            batch_losses.update({
+                'scale_loss': scale_loss.item(),
             })
 
         # forward_end.record()

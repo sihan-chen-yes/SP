@@ -181,3 +181,11 @@ def chamfer_loss(P, Q):
     Q_to_P_loss = torch.norm(Q - P[q_idx], dim=-1).mean()
 
     return P_to_Q_loss + Q_to_P_loss
+
+def bound_loss(values, lower_bound=1e-4, upper_bound=1e-2):
+    loss_lower_part = 1 / torch.clamp(values[values < lower_bound], min=1e-7)
+    loss_upper_part = torch.square(values[values > upper_bound] - upper_bound)
+    loss_combined = torch.cat([loss_lower_part, loss_upper_part], dim=0)
+    loss = loss_combined.mean() if loss_combined.numel() > 0 else 0.0
+    return loss
+
