@@ -481,22 +481,21 @@ class AvatarNet(nn.Module):
             #     depth_map = self.cano_smpl_depth_map
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
-            predicted_depth_map[~self.cano_smpl_mask] = 0.0
             cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
+            # for visualize
+            cano_pts_visualize = cano_pts
         else:
             # update cano gs
 
             # self.cano_gaussian_model.create_from_pcd(self.cano_smpl_map[mask], torch.rand_like(self.cano_smpl_map[mask]), spatial_lr_scale=2.5)
             # cano_pts, pos_map = self.get_positions(pose_map, mask_bool, return_map = True)
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
-            # use opacity map to mask depth map
-            # TODO
-            predicted_depth_map[opacity_map < 0.5] = 0.0
             cano_pts, pos_map = self.depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             # smplx_cano_pts, _ = self.get_positions(pose_map, self.cano_smpl_mask, return_map = True)
-
+            # for visualize
+            cano_pts_visualize = cano_pts[(opacity_map >= 0.5).flatten()]
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -616,7 +615,7 @@ class AvatarNet(nn.Module):
             # 'template_depth_map': template_depth_map,
             # 'cano_template_depth_map': cano_template_depth_map,
             "predicted_mask": opacity_map,
-            "cano_pts": cano_pts,
+            "cano_pts": cano_pts_visualize,
             'predicted_depth_map': predicted_depth_map,
             "scales": scales,
         }
