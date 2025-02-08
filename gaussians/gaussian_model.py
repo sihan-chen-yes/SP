@@ -189,8 +189,14 @@ class GaussianModel:
 
         # print("Number of points at initialisation : ", fused_point_cloud.shape[0])
         # dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.0000001)
-        dist2 = torch.clamp_min(knn_points(fused_point_cloud[None], fused_point_cloud[None], K = 4)[0][0, :, 1:].mean(-1), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        smplx_fused_point_cloud = fused_point_cloud[mask]
+        dist2 = torch.clamp_min(knn_points(smplx_fused_point_cloud[None], smplx_fused_point_cloud[None], K = 4)[0][0, :, 1:].mean(-1), 0.0000001)
+        scales = torch.zeros_like(fused_point_cloud)
+        smplx_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        # use smplx mean scale as background gaussian scale
+        background_scale = torch.sqrt(dist2).mean()
+        scales[~mask] = background_scale
+        scales[mask] = smplx_scales
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 

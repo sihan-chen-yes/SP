@@ -182,10 +182,13 @@ def chamfer_loss(P, Q):
 
     return P_to_Q_loss + Q_to_P_loss
 
-def bound_loss(values, lower_bound=1e-4, upper_bound=1e-2):
-    loss_lower_part = 1 / torch.clamp(values[values < lower_bound], min=1e-7)
-    loss_upper_part = torch.square(values[values > upper_bound] - upper_bound)
-    loss_combined = torch.cat([loss_lower_part, loss_upper_part], dim=0)
-    loss = loss_combined.mean() if loss_combined.numel() > 0 else 0.0
-    return loss
+def bound_loss(values, lower_bound=1e-4, upper_bound=5e-2):
+    lower_part_mask = values < lower_bound
+    upper_part_mask = values > upper_bound
+    loss_lower_part = 1 / torch.clamp(values[lower_part_mask], min=1e-7)
+    loss_upper_part = torch.square(values[upper_part_mask] - upper_bound)
+    loss = torch.zeros_like(values)
+    loss[lower_part_mask] = loss_lower_part
+    loss[upper_part_mask] = loss_upper_part
+    return loss.mean()
 
