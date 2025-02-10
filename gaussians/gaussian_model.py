@@ -194,7 +194,7 @@ class GaussianModel:
         scales = torch.zeros_like(fused_point_cloud)
         smplx_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         # use smplx mean scale as background gaussian scale
-        background_scale = torch.sqrt(dist2).mean()
+        background_scale = torch.log(torch.sqrt(dist2).mean())
         scales[~mask] = background_scale
         scales[mask] = smplx_scales
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")

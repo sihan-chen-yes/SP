@@ -57,8 +57,9 @@ class AvatarNet(nn.Module):
 
         self.cano_init_points = self.cano_smpl_map[self.bounding_mask]
         self.lbs_init_points = self.cano_smpl_map[torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0]
+        self.pos_map_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
         self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), spatial_lr_scale = 2.5,
-                                                 mask = self.cano_smpl_mask[self.bounding_mask])
+                                                 mask = self.pos_map_mask[self.bounding_mask])
 
         cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)

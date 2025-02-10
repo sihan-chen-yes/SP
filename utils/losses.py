@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.autograd as autograd
 import numpy as np
+import cv2 as cv
 
 import network.styleunet.conv2d_gradfix as conv2d_gradfix
 import pytorch3d.ops
@@ -190,5 +191,9 @@ def bound_loss(values, lower_bound=1e-4, upper_bound=5e-2):
     loss = torch.zeros_like(values)
     loss[lower_part_mask] = loss_lower_part
     loss[upper_part_mask] = loss_upper_part
+    # cv.imwrite('../avatarrex/lbn1/test/lower_part.exr',
+    #            lower_part_mask.view(1024, 2048, 3).float().cpu().numpy())
+    # cv.imwrite('../avatarrex/lbn1/test/upper_part.exr',
+    #            upper_part_mask.view(1024, 2048, 3).float().cpu().numpy())
     return loss.mean()
 
