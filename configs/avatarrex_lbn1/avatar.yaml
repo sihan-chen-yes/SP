@@ -14,9 +14,9 @@ train:
   net_ckpt_dir: ./results/avatarrex_lbn1/avatar
   prev_ckpt: null
   ckpt_interval:
-    epoch: 10
-    batch: 50000
-  eval_interval: 1000
+    epoch: 1
+    batch: 5000
+  eval_interval: 100
   eval_training_ids: [481, 0]
   eval_testing_ids: [507, 8]
   eval_img_factor: 1.0
