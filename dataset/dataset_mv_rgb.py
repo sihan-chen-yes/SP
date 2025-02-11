@@ -23,7 +23,8 @@ class MvRgbDatasetBase(Dataset):
         subject_name = None,
         load_smpl_pos_map = False,
         load_smpl_nml_map = False,
-        mode = '3dgs'
+        mode = '3dgs',
+        map_size = 1024
     ):
         super(MvRgbDatasetBase, self).__init__()
 
@@ -38,6 +39,7 @@ class MvRgbDatasetBase(Dataset):
 
         self.load_cam_data()
         self.load_smpl_data()
+        self.map_size = map_size
 
         self.smpl_model = smplx.SMPLX(model_path = config.PROJ_DIR + '/smpl_files/smplx', gender = 'neutral', use_pca = False, num_pca_comps = 45, flat_hand_mean = True, batch_size = 1)
 
@@ -144,14 +146,14 @@ class MvRgbDatasetBase(Dataset):
 
         data_item = dict()
         if self.load_smpl_pos_map:
-            smpl_pos_map = cv.imread(self.data_dir + '/smpl_pos_map/%08d.exr' % pose_idx, cv.IMREAD_UNCHANGED)
+            smpl_pos_map = cv.imread(self.data_dir + "/smpl_pos_map_{}/{:08d}.exr".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
             pos_map_size = smpl_pos_map.shape[1] // 2
             smpl_pos_map = np.concatenate([smpl_pos_map[:, :pos_map_size], smpl_pos_map[:, pos_map_size:]], 2)
             smpl_pos_map = smpl_pos_map.transpose((2, 0, 1))
             data_item['smpl_pos_map'] = smpl_pos_map
 
         if self.load_smpl_nml_map:
-            smpl_nml_map = cv.imread(self.data_dir + '/smpl_nml_map/%08d.jpg' % pose_idx, cv.IMREAD_UNCHANGED)
+            smpl_nml_map = cv.imread(self.data_dir + "/smpl_nml_map_{}/{:08d}.jpg".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
             smpl_nml_map = (smpl_nml_map / 255.).astype(np.float32)
             nml_map_size = smpl_nml_map.shape[1] // 2
             smpl_nml_map = np.concatenate([smpl_nml_map[:, :nml_map_size], smpl_nml_map[:, nml_map_size:]], 2)
@@ -288,8 +290,7 @@ class MvRgbDatasetBase(Dataset):
         from sklearn.decomposition import PCA
         from tqdm import tqdm
         import joblib
-
-        if not os.path.exists(self.data_dir + '/smpl_pos_map/pca_%d.ckpt' % n_components):
+        if not os.path.exists(self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components)):
             pose_conds = []
             mask = None
             for pose_idx in tqdm(self.pose_list, desc = 'Loading position maps...'):
@@ -302,10 +303,10 @@ class MvRgbDatasetBase(Dataset):
             pose_conds = pose_conds.reshape(pose_conds.shape[0], -1)
             self.pca = PCA(n_components = n_components)
             self.pca.fit(pose_conds)
-            joblib.dump(self.pca, self.data_dir + '/smpl_pos_map/pca_%d.ckpt' % n_components)
+            joblib.dump(self.pca, self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components))
             self.pos_map_mask = mask
         else:
-            self.pca = joblib.load(self.data_dir + '/smpl_pos_map/pca_%d.ckpt' % n_components)
+            self.pca = joblib.load(self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components))
             pose_map = cv.imread(sorted(glob.glob(self.data_dir + '/smpl_pos_map/0*.exr'))[0], cv.IMREAD_UNCHANGED)
             pose_map = pose_map[:, :pose_map.shape[1] // 2]
             self.pos_map_mask = np.linalg.norm(pose_map, axis = -1) > 1e-6
@@ -331,7 +332,8 @@ class MvRgbDatasetTHuman4(MvRgbDatasetBase):
         subject_name = None,
         load_smpl_pos_map = False,
         load_smpl_nml_map = False,
-        mode = '3dgs'
+        mode = '3dgs',
+        map_size = 1024
     ):
         super(MvRgbDatasetTHuman4, self).__init__(
             data_dir,
@@ -341,7 +343,8 @@ class MvRgbDatasetTHuman4(MvRgbDatasetBase):
             subject_name,
             load_smpl_pos_map,
             load_smpl_nml_map,
-            mode
+            mode,
+            map_size
         )
 
     def load_cam_data(self):
@@ -388,7 +391,8 @@ class MvRgbDatasetAvatarReX(MvRgbDatasetBase):
         subject_name = None,
         load_smpl_pos_map = False,
         load_smpl_nml_map = False,
-        mode = '3dgs'
+        mode = '3dgs',
+        map_size = 1024
     ):
         super(MvRgbDatasetAvatarReX, self).__init__(
             data_dir,
@@ -398,7 +402,8 @@ class MvRgbDatasetAvatarReX(MvRgbDatasetBase):
             subject_name,
             load_smpl_pos_map,
             load_smpl_nml_map,
-            mode
+            mode,
+            map_size
         )
 
     def load_cam_data(self):
@@ -447,7 +452,8 @@ class MvRgbDatasetActorsHQ(MvRgbDatasetBase):
         subject_name = None,
         load_smpl_pos_map = False,
         load_smpl_nml_map = False,
-        mode = '3dgs'
+        mode = '3dgs',
+        map_size = 1024
     ):
         super(MvRgbDatasetActorsHQ, self).__init__(
             data_dir,
@@ -457,7 +463,8 @@ class MvRgbDatasetActorsHQ(MvRgbDatasetBase):
             subject_name,
             load_smpl_pos_map,
             load_smpl_nml_map,
-            mode
+            mode,
+            map_size
         )
 
         if subject_name is None:

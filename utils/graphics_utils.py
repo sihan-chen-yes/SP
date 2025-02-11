@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -16,6 +16,7 @@ from typing import NamedTuple
 from pytorch3d.renderer import (
     OrthographicCameras,
 )
+import cv2 as cv
 
 class BasicPointCloud(NamedTuple):
     points : np.array
@@ -119,3 +120,123 @@ def get_orthographic_camera(extr, height, width, device):
         image_size=((height, width),)
     )
     return camera
+
+def position_to_depth(camera, xyz):
+    assert xyz.shape[0] == 1
+    xyz_cam = camera.get_world_to_view_transform().transform_points(xyz)
+    # extract the depth of each point as the 3rd coord of xyz_cam
+    depth = xyz_cam[:, :, 2:]
+
+    depths = depth.squeeze(0)
+    # project the points xyz to the camera
+    xy = camera.transform_points(xyz)[:, :, :2]
+
+    uv = torch.round(xy.squeeze(0)).long()
+    height, width = int(camera.image_size[0, 0]), int(camera.image_size[0, 1])
+
+    valid_mask = (uv[:, 0] >= 0) & (uv[:, 0] < width) & \
+                 (uv[:, 1] >= 0) & (uv[:, 1] < height)
+
+    uv = uv[valid_mask]
+    depths = depths[valid_mask]
+
+    linear_idx = uv[:, 1] * width + uv[:, 0]
+    depths = depths.squeeze()
+    flat_depth_map = torch.full((height * width,), float('inf'), device=xyz.device)
+
+    # for idx, depth in zip(linear_idx, depths):
+    #     flat_depth_map[idx] = min(flat_depth_map[idx], depth)
+
+    flat_depth_map.scatter_reduce_(
+        dim=0,
+        index=linear_idx,
+        src=depths,
+        reduce="amin"  # min
+    )
+
+    depth_map = flat_depth_map.view(height, width)
+    depth_map[depth_map == float('inf')] = 0
+
+    return depth_map
+
+def get_orthographic_depth_map(xyz, height=1024, width=1024):
+    cano_v = xyz.cpu().detach().numpy()
+    cano_center = 0.5 * (cano_v.min(0) + cano_v.max(0))
+    cano_center = torch.from_numpy(cano_center).to('cuda')
+
+    front_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+    front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+    front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
+    front_mv[1:3, :] *= -1
+    front_camera = get_orthographic_camera(front_mv, height, width, cano_center.device)
+
+    back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+    rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
+    rot_y = torch.from_numpy(rot_y).to(cano_center.device)
+    back_mv[:3, :3] = rot_y
+    back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+    back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
+    back_mv[1:3] *= -1
+    back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
+
+    # position to depth
+    xyz = xyz.unsqueeze(0)  # 3D points of shape (batch_size, num_points, 3)
+
+    front_depth = position_to_depth(front_camera, xyz)
+    back_depth = position_to_depth(back_camera, xyz)
+    # orthographic projected depth map
+    depth_map = torch.cat([front_depth, back_depth], dim=1)
+
+    return depth_map
+
+def depth_to_position(cameras, depth_map):
+    h, w = depth_map.shape
+    # homogeneous
+    x, y = torch.meshgrid(torch.arange(w, device=depth_map.device), torch.arange(h, device=depth_map.device), indexing="xy")
+    xy_depth = torch.stack((x, y, depth_map), dim=-1)  # (H, W, 3)
+    xy_depth = xy_depth.reshape(-1, 3).to(depth_map.device, dtype=torch.float32)  # Flatten to (N, 3)
+    xyz_unproj_world = cameras.unproject_points(xy_depth, world_coordinates=True)
+    points_world = xyz_unproj_world.reshape(h, w, -1)
+    return points_world
+
+def depth_map_to_pos_map(depth_map, mask, return_map=False, front_camera=None, back_camera=None):
+    width = depth_map.shape[1] // 2
+    # split the whole depth map
+    depth_front = depth_map[:, :width]
+    depth_back = depth_map[:, width:]
+
+    assert front_camera != None and back_camera != None
+    points_world_front = depth_to_position(front_camera, depth_front)
+
+    points_world_back = depth_to_position(back_camera, depth_back)
+
+    position_map = torch.cat([points_world_front, points_world_back], dim=1)
+
+    positions = position_map[mask]
+
+    if return_map:
+        return positions, position_map
+    else:
+        return positions
+
+def gen_front_back_cameras(xyz, height=1024, width=1024):
+    cano_smpl_v = xyz.cpu().detach().numpy()
+    cano_center = 0.5 * (cano_smpl_v.min(0) + cano_smpl_v.max(0))
+    cano_center = torch.from_numpy(cano_center).to('cuda')
+
+    front_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+    front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+    front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
+    front_mv[1:3, :] *= -1
+    front_camera = get_orthographic_camera(front_mv, height, width, cano_center.device)
+
+    back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
+    rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
+    rot_y = torch.from_numpy(rot_y).to(cano_center.device)
+    back_mv[:3, :3] = rot_y
+    back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
+
+    back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
+    back_mv[1:3] *= -1
+    back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
+    return front_camera, back_camera

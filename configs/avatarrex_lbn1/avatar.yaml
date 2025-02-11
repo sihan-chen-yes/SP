@@ -2,6 +2,7 @@ mode: train
 train:
   dataset: MvRgbDatasetAvatarReX
   data:
+    map_size: 512
     subject_name: avatarrex_lbn1
     data_dir: ../avatarrex/lbn1
     frame_range: &id001
