@@ -31,7 +31,7 @@ from utils.renderer.renderer_pytorch3d import Renderer
 from pytorch3d.renderer import (
     OrthographicCameras,
 )
-from utils.graphics_utils import get_orthographic_camera
+from utils.graphics_utils import get_orthographic_camera, depth_map_to_pos_map
 from utils.losses import chamfer_loss, bound_loss
 def safe_exists(path):
     if path is None:
@@ -61,8 +61,6 @@ class AvatarTrainer:
         self.bg_color_cuda = torch.from_numpy(np.asarray(self.bg_color)).to(torch.float32).to(config.device)
         self.loss_weight = self.opt['train']['loss_weight']
         self.finetune_color = self.opt['train']['finetune_color']
-        self.width = 2048
-        self.height = 1024
         print('# Parameter number of AvatarNet is %d' % (sum([p.numel() for p in self.avatar_net.parameters()])))
 
     def update_lr(self):
@@ -148,11 +146,11 @@ class AvatarTrainer:
             # use clothed template 3d pts to supervise
             # predict clothed template mask
             mask = predicted_mask > 0.5
-            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, mask)
+            position = depth_map_to_pos_map(predicted_depth, mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
             position_loss = chamfer_loss(position, self.avatar_net.cano_template_init_points)
         else:
             # use smplx 3d pts to supervise
-            position = self.avatar_net.depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask)
+            position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
             target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
             position_loss = chamfer_loss(position[target_region],
                                          self.avatar_net.cano_init_points[target_region])
