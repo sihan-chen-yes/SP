@@ -28,7 +28,7 @@ train:
     mask: 0.1
     depth: 0.1
     predicted_depth: 0.1
-    offset: 0.005
+    non_rigid_offset: 0.005
     opacity: 0.1
     scale: 0.01
   finetune_color: false

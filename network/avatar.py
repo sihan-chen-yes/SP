@@ -72,13 +72,13 @@ class AvatarNet(nn.Module):
 
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.position_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.non_rigid_offset_net = DualStyleUNet(inp_size =self.map_size // 2, inp_ch = 3, out_ch = 2, out_size = self.map_size, style_dim =self.map_size // 2, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.mask_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
-        self.position_style = torch.ones([1, self.position_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.position_net.style_dim)
+        self.non_rigid_offset_style = torch.ones([1, self.non_rigid_offset_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.non_rigid_offset_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.mask_style = torch.ones([1, self.mask_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.mask_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
@@ -331,6 +331,17 @@ class AvatarNet(nn.Module):
         })
         return live_pos_map
 
+    def get_non_rigid_offset(self, pose_map, mask, return_map=False):
+        non_rigid_offset_map, _ = self.non_rigid_offset_net([self.non_rigid_offset_style], pose_map[None], randomize_noise=False)
+        front_map, back_map = torch.split(non_rigid_offset_map, [2, 2], 1)
+        non_rigid_offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
+        delta_position = 0.05 * non_rigid_offset_map[mask]
+        if return_map:
+            return delta_position, non_rigid_offset_map
+        else:
+            return delta_position
+
+
     # def depth_to_position(self, cameras, depth_map):
     #     h, w = depth_map.shape
     #     # recover camera view coords
@@ -390,6 +401,7 @@ class AvatarNet(nn.Module):
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
+            non_rigid_offset = self.get_non_rigid_offset(pose_map, self.cano_smpl_mask)
             # for visualize
             cano_pts_visualize = cano_pts
         else:
@@ -397,8 +409,12 @@ class AvatarNet(nn.Module):
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
+            non_rigid_offset = self.get_non_rigid_offset(pose_map, self.bounding_mask)
             # for visualize
             cano_pts_visualize = cano_pts[(opacity_map >= 0.5).flatten()]
+
+        # 2d(xy direction) non_rigid_offset (pts_num, 2)
+        cano_pts[:, :2] = cano_pts[:, :2] + non_rigid_offset
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -439,9 +455,6 @@ class AvatarNet(nn.Module):
         # )
         #
         # cano_depth_map = render_ret['depth'].permute(1, 2, 0)
-
-        # nonrigid_offset = smplx_cano_pts - self.init_points
-        nonrigid_offset = 0
 
         gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
@@ -503,7 +516,7 @@ class AvatarNet(nn.Module):
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
-            'offset': nonrigid_offset,
+            'non_rigid_offset': non_rigid_offset,
 
             'depth_map': depth_map,
             # 'cano_depth_map': cano_depth_map,

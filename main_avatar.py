@@ -238,7 +238,7 @@ class AvatarTrainer:
         """ Optimize generator """
         if self.finetune_color:
             self.requires_net_grad(self.avatar_net.color_net, True)
-            self.requires_net_grad(self.avatar_net.position_net, False)
+            self.requires_net_grad(self.avatar_net.non_rigid_offset_net, False)
             self.requires_net_grad(self.avatar_net.other_net, True)
         else:
             self.requires_net_grad(self.avatar_net, True)
@@ -246,7 +246,6 @@ class AvatarTrainer:
         # forward_start.record()
         render_output = self.avatar_net.render(items, self.bg_color)
         image = render_output['rgb_map'].permute(2, 0, 1)
-        offset = render_output['offset']
 
         # mask image & set bg color
         items['color_img'][~items['mask_img']] = self.bg_color_cuda
@@ -310,12 +309,15 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        # if self.loss_weight['offset'] > 0.:
-        #     offset_loss = torch.linalg.norm(offset, dim = -1).mean()
-        #     total_loss += self.loss_weight['offset'] * offset_loss
-        #     batch_losses.update({
-        #         'offset_loss': offset_loss.item()
-        #     })
+        if self.loss_weight['non_rigid_offset'] > 0. and 'non_rigid_offset' in render_output:
+            non_rigid_offset = render_output['non_rigid_offset']
+
+            non_rigid_offset_loss = torch.linalg.norm(non_rigid_offset, dim = -1).mean()
+            total_loss += self.loss_weight['non_rigid_offset'] * non_rigid_offset_loss
+            batch_losses.update({
+                'nr_offset_loss': non_rigid_offset_loss.item()
+            })
+
         if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
