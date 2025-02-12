@@ -328,6 +328,18 @@ class AvatarTrainer:
                 'opacity_loss': opacity_loss.item(),
             })
 
+        if self.loss_weight.get('opacity_symmetric', 0.) and 'predicted_mask' in render_output:
+            predicted_mask = render_output['predicted_mask']
+            front_mask, back_mask = torch.split(predicted_mask, [self.avatar_net.map_size, self.avatar_net.map_size], 1)
+            back_mask_flipped = torch.flip(back_mask, dims=(1,))
+            # regularization for smpl opacity
+            opacity_symmetric_loss = torch.abs(front_mask - back_mask_flipped).mean()
+            lambda_opacity_symmetric = self.loss_weight.get('opacity_symmetric', 0.)
+            total_loss += lambda_opacity_symmetric * opacity_symmetric_loss
+            batch_losses.update({
+                'opacity_symmetric_loss': opacity_symmetric_loss.item(),
+            })
+
         if self.loss_weight.get('scale', 0.) and 'scales' in render_output:
             scales = render_output['scales']
             # regularization for gaussian scales
