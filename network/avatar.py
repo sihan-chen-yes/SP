@@ -172,7 +172,7 @@ class AvatarNet(nn.Module):
         # smplx transformation
         # cano 2 live space: LBS
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-        lbs_pts_idx = cano_gaussian_vals["lbs_pts_idx"]
+        lbs_pts_idx = self.get_lbs_pts_idx(cano_gaussian_vals["positions"], self.lbs_init_points)
         # pick the corresponding transformation for each pts
         pt_mats = pt_mats[lbs_pts_idx, :]
         posed_gaussian_vals = cano_gaussian_vals.copy()
@@ -187,9 +187,10 @@ class AvatarNet(nn.Module):
         # smplx inverse transformation
         # live 2 cano space: inverse LBS
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
+        obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
+        lbs_pts_idx = self.get_lbs_pts_idx(posed_gaussian_vals["positions"], obs_lbs_pts)
         # inverse LBS transformation matrix
         pt_mats = torch.linalg.inv(pt_mats)
-        lbs_pts_idx = posed_gaussian_vals["lbs_pts_idx"]
         # pick the corresponding transformation for each pts
         pt_mats = pt_mats[lbs_pts_idx, :]
         cano_gaussian_vals = posed_gaussian_vals.copy()
@@ -481,7 +482,6 @@ class AvatarNet(nn.Module):
             rotations = w * self.hand_rotations + (1.0 - w) * rotations
             # colors = w * self.hand_colors + (1.0 - w) * colors
 
-        lbs_pts_idx = self.get_lbs_pts_idx(cano_pts)
 
         gaussian_vals = {
             'positions': cano_pts,
@@ -490,7 +490,6 @@ class AvatarNet(nn.Module):
             'rotations': rotations,
             'colors': colors,
             'max_sh_degree': self.max_sh_degree,
-            'lbs_pts_idx': lbs_pts_idx,
         }
 
         # render_ret = render3(
@@ -612,13 +611,13 @@ class AvatarNet(nn.Module):
 
         return bounding_mask
 
-    def get_lbs_pts_idx(self, cano_pts):
+    def get_lbs_pts_idx(self, pts, lbs_pts):
         """
         return the most appropriate lbs point idx for each pts
         """
         # nearest idx
         # use the nearest vertex
-        knn_ret = pytorch3d.ops.knn_points(cano_pts.unsqueeze(0), self.lbs_init_points.unsqueeze(0))
+        knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0))
         lbs_pts_idx = knn_ret.idx.squeeze()
         # TODO interpolation
         return lbs_pts_idx
