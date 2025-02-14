@@ -9,6 +9,7 @@ import cv2 as cv
 
 import config
 from network.styleunet.dual_styleunet import DualStyleUNet
+from network.volume import compute_gradient_volume
 from gaussians.gaussian_model import GaussianModel
 from gaussians.gaussian_renderer import render3
 from utils.network_utils import VanillaCondMLP
@@ -20,6 +21,8 @@ from utils.renderer.renderer_pytorch3d import Renderer
 from utils.graphics_utils import get_orthographic_camera, depth_to_position, depth_map_to_pos_map
 import os
 from utils.obj_io import save_mesh_as_ply
+import root_finding
+from network.volume import CanoBlendWeightVolume
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
@@ -123,6 +126,16 @@ class AvatarNet(nn.Module):
         back_mv[1:3] *= -1
         self.back_camera = get_orthographic_camera(back_mv, self.map_size, self.map_size, cano_center.device)
 
+        # for root finding
+        self.cano_weight_volume = CanoBlendWeightVolume(config.opt['train']['data']['data_dir'] + '/cano_weight_volume.npz')
+        if self.opt.get('volume_type', 'diff') == 'diff':
+            self.weight_volume = self.cano_weight_volume.diff_weight_volume[0].permute(1, 2, 3, 0).contiguous()
+        else:
+            self.weight_volume = self.cano_weight_volume.ori_weight_volume[0].permute(1, 2, 3, 0).contiguous()
+        self.grad_volume = compute_gradient_volume(self.weight_volume.permute(3, 0, 1, 2), self.cano_weight_volume.voxel_size).permute(2, 3, 4, 0, 1)\
+            .reshape(self.cano_weight_volume.res_x, self.cano_weight_volume.res_y, self.cano_weight_volume.res_z, -1).contiguous()
+        self.res = torch.tensor([self.cano_weight_volume.res_x, self.cano_weight_volume.res_y, self.cano_weight_volume.res_z], dtype = torch.int32, device = config.device)
+
     def generate_mean_hands(self):
         # print('# Generating mean hands ...')
         import glob
@@ -155,19 +168,64 @@ class AvatarNet(nn.Module):
         # hand_pts.export('./debug/hand_template.obj')
         # exit(1)
 
-    def transform_cano2live(self, gaussian_vals, items):
+    def transform_cano2live(self, cano_gaussian_vals, items):
         # smplx transformation
-        pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-        # find the nearest vertex
-        knn_ret = pytorch3d.ops.knn_points(gaussian_vals['positions'].unsqueeze(0), self.lbs_init_points.unsqueeze(0))
-        p_idx = knn_ret.idx.squeeze()
-        pt_mats = pt_mats[p_idx, :]
-        gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], gaussian_vals['positions']) + pt_mats[..., :3, 3]
-        rot_mats = pytorch3d.transforms.quaternion_to_matrix(gaussian_vals['rotations'])
+        # cano 2 live space: LBS
+        pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], self.lbs_init_points)
+        # pick the corresponding transformation for each pts
+        pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
+        posed_gaussian_vals = cano_gaussian_vals.copy()
+        posed_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], cano_gaussian_vals['positions']) + pt_mats[..., :3, 3]
+        rot_mats = pytorch3d.transforms.quaternion_to_matrix(cano_gaussian_vals['rotations'])
         rot_mats = torch.einsum('nxy,nyz->nxz', pt_mats[..., :3, :3], rot_mats)
-        gaussian_vals['rotations'] = pytorch3d.transforms.matrix_to_quaternion(rot_mats)
+        posed_gaussian_vals['rotations'] = pytorch3d.transforms.matrix_to_quaternion(rot_mats)
 
-        return gaussian_vals
+        return posed_gaussian_vals
+
+    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False, return_pts_w=False):
+        # smplx inverse transformation
+        # live 2 cano space: inverse LBS
+        pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
+        obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
+        pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], obs_lbs_pts)
+        # inverse LBS transformation matrix
+        pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
+        cano_gaussian_vals = posed_gaussian_vals.copy()
+        cano_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], posed_gaussian_vals['positions']) + pt_mats[..., :3, 3]
+
+        if use_root_finding:
+            argmax_lbs = torch.argmax(pts_w, -1)
+            nonopt_bone_ids = [7, 8, 10, 11]
+            nonopt_pts_flag = torch.zeros((cano_gaussian_vals['positions'].shape[0]), dtype=torch.bool).to(argmax_lbs.device)
+            for i in nonopt_bone_ids:
+                nonopt_pts_flag = torch.logical_or(nonopt_pts_flag, argmax_lbs == i)
+            root_finding_flag = torch.logical_not(nonopt_pts_flag)
+            if root_finding_flag.any():
+                cano_pts_ = cano_gaussian_vals['positions'][root_finding_flag].unsqueeze(0)
+                posed_pts_ = posed_gaussian_vals['positions'][root_finding_flag].unsqueeze(0)
+                if not cano_pts_.is_contiguous():
+                    cano_pts_ = cano_pts_.contiguous()
+                if not posed_pts_.is_contiguous():
+                    posed_pts_ = posed_pts_.contiguous()
+                root_finding.root_finding(
+                    self.weight_volume,
+                    self.grad_volume,
+                    posed_pts_,
+                    cano_pts_,
+                    items['cano2live_jnt_mats'],
+                    self.cano_weight_volume.volume_bounds,
+                    self.res,
+                    cano_pts_,
+                    0.1,
+                    10
+                )
+                cano_gaussian_vals['positions'][root_finding_flag] = cano_pts_[0]
+
+        rot_mats = pytorch3d.transforms.quaternion_to_matrix(posed_gaussian_vals['rotations'])
+        rot_mats = torch.einsum('nxy,nyz->nxz', pt_mats[..., :3, :3], rot_mats)
+        cano_gaussian_vals['rotations'] = pytorch3d.transforms.matrix_to_quaternion(rot_mats)
+
+        return cano_gaussian_vals, pts_w
 
     def get_others(self, pose_map, mask, return_map = False):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
@@ -391,14 +449,15 @@ class AvatarNet(nn.Module):
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
             # for visualize
-            cano_pts_visualize = cano_pts
+            visualize_mask = self.cano_smpl_mask
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             # for visualize
-            cano_pts_visualize = cano_pts[(opacity_map >= 0.5).flatten()]
+            visualize_mask = (opacity_map >= 0.5).flatten()
+        cano_pts_visualize = cano_pts[visualize_mask]
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -420,13 +479,14 @@ class AvatarNet(nn.Module):
             rotations = w * self.hand_rotations + (1.0 - w) * rotations
             # colors = w * self.hand_colors + (1.0 - w) * colors
 
+
         gaussian_vals = {
             'positions': cano_pts,
             'opacity': opacity,
             'scales': scales,
             'rotations': rotations,
             'colors': colors,
-            'max_sh_degree': self.max_sh_degree
+            'max_sh_degree': self.max_sh_degree,
         }
 
         # render_ret = render3(
@@ -443,10 +503,10 @@ class AvatarNet(nn.Module):
         # nonrigid_offset = smplx_cano_pts - self.init_points
         nonrigid_offset = 0
 
-        gaussian_vals = self.transform_cano2live(gaussian_vals, items)
+        posed_gaussian_vals = self.transform_cano2live(gaussian_vals, items)
 
         render_ret = render3(
-            gaussian_vals,
+            posed_gaussian_vals,
             bg_color,
             items['extr'],
             items['intr'],
@@ -500,6 +560,11 @@ class AvatarNet(nn.Module):
         # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
+        posed_pts_visualize = posed_gaussian_vals["positions"][visualize_mask]
+        # inverse LBS
+        cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
+        inverse_cano_pts_visualize = cano_gaussian_vals["positions"][visualize_mask]
+        posed_pts_w_visualize = posed_pts_w[visualize_mask]
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -521,6 +586,9 @@ class AvatarNet(nn.Module):
             "cano_pts": cano_pts_visualize,
             'predicted_depth_map': predicted_depth_map,
             "scales": scales,
+            "inverse_cano_pts": inverse_cano_pts_visualize,
+            "posed_pts": posed_pts_visualize,
+            "posed_pts_w": posed_pts_w_visualize,
         }
 
         # if not self.training:
@@ -543,3 +611,30 @@ class AvatarNet(nn.Module):
             bounding_mask[y_min:y_max + 1, x_min:x_max + 1] = True
 
         return bounding_mask
+
+    def get_lbs_pts_w(self, pts, lbs_pts, method="linear_interpolation"):
+        """
+        return the most appropriate lbs point weight each pts
+        using different strategy
+
+        method:
+        NN: nearest neighbor
+
+        LI: linear_interpolation
+        """
+        if method == "NN":
+            # use the nearest vertex
+            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 1)
+            lbs_pts_idx = knn_ret.idx.squeeze()
+            pts_w = self.lbs[lbs_pts_idx]
+        elif method == "linear_interpolation":
+            # use inverse distance to interpolate linearly
+            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 4)
+            lbs_pts_idx = knn_ret.idx.squeeze() #(N, 4)
+            lbs_pts_dist = knn_ret.dists.squeeze() #(N, 4)
+            lbs_pts_dist = torch.clamp(lbs_pts_dist, min=1e-6)
+            inv_pts_dist = 1 / lbs_pts_dist # inverse distance
+            weight = inv_pts_dist / inv_pts_dist.sum(dim=1, keepdim=True) # normalize
+            pts_w = (weight.unsqueeze(-1) * self.lbs[lbs_pts_idx]).sum(dim=1) #(N, K, 55) -> (N, 55)
+
+        return pts_w
