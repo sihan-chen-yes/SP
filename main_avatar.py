@@ -626,6 +626,7 @@ class AvatarTrainer:
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts"].cpu().numpy())
 
         # training data
         pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
@@ -664,6 +665,7 @@ class AvatarTrainer:
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts"].cpu().numpy())
 
 
         # export mask
