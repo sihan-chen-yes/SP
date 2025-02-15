@@ -10,7 +10,8 @@ train:
     - 0
     - 1901
     - 1
-    used_cam_ids: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15]
+#    used_cam_ids: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15]
+    used_cam_ids: [1, 5, 6, 12]
     load_smpl_pos_map: true
   pretrained_dir: null
   net_ckpt_dir: ./results/avatarrex_lbn1/avatar
@@ -30,9 +31,9 @@ train:
     l1: 1.0
     lpips: 0.1
     mask: 0.1
-    opaque: 0.1
     predicted_depth: 0.1
     opacity: 0.1
+    opaque: 0.1
     opacity_symmetric: 0.003
     scale: 0.01
     skinning_weight: 0.1
@@ -42,7 +43,7 @@ train:
     depth_smooth: 0.05
     aiap_xyz: 0.0
     aiap_cov: 0.0
-    xy_nr_offset: 0.0
+    xy_nr_offset: 0.005
   loss_range:
     opacity:
       end: 10000
@@ -87,7 +88,7 @@ model:
   random_style: false
   lbs_weights: lbs_weights
   lbs_weight_interpolation: linear
-  xy_nr_scaling: 0.0
+  xy_nr_scaling: 0.05
   opacity_intensity: 5
   mlp:
     n_neurons: 64
