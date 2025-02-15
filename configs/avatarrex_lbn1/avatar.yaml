@@ -9,7 +9,8 @@ train:
     - 0
     - 1901
     - 1
-    used_cam_ids: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15]
+#    used_cam_ids: [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15]
+    used_cam_ids: [1, 5, 6, 12]
     load_smpl_pos_map: true
   pretrained_dir: null
   net_ckpt_dir: ./results/avatarrex_lbn1/avatar
