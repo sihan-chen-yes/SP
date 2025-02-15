@@ -171,10 +171,9 @@ class AvatarNet(nn.Module):
     def transform_cano2live(self, cano_gaussian_vals, items):
         # smplx transformation
         # cano 2 live space: LBS
-        pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-        lbs_pts_idx = self.get_lbs_pts_idx(cano_gaussian_vals["positions"], self.lbs_init_points)
+        pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], self.lbs_init_points)
         # pick the corresponding transformation for each pts
-        pt_mats = pt_mats[lbs_pts_idx, :]
+        pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
         posed_gaussian_vals = cano_gaussian_vals.copy()
         posed_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], cano_gaussian_vals['positions']) + pt_mats[..., :3, 3]
         rot_mats = pytorch3d.transforms.quaternion_to_matrix(cano_gaussian_vals['rotations'])
@@ -188,16 +187,14 @@ class AvatarNet(nn.Module):
         # live 2 cano space: inverse LBS
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
         obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
-        lbs_pts_idx = self.get_lbs_pts_idx(posed_gaussian_vals["positions"], obs_lbs_pts)
+        pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], obs_lbs_pts)
         # inverse LBS transformation matrix
-        pt_mats = torch.linalg.inv(pt_mats)
-        # pick the corresponding transformation for each pts
-        pt_mats = pt_mats[lbs_pts_idx, :]
+        pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
         cano_gaussian_vals = posed_gaussian_vals.copy()
         cano_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], posed_gaussian_vals['positions']) + pt_mats[..., :3, 3]
 
         if use_root_finding:
-            argmax_lbs = torch.argmax(self.lbs[lbs_pts_idx], -1)
+            argmax_lbs = torch.argmax(pts_w, -1)
             nonopt_bone_ids = [7, 8, 10, 11]
             nonopt_pts_flag = torch.zeros((cano_gaussian_vals['positions'].shape[0]), dtype=torch.bool).to(argmax_lbs.device)
             for i in nonopt_bone_ids:
@@ -611,13 +608,29 @@ class AvatarNet(nn.Module):
 
         return bounding_mask
 
-    def get_lbs_pts_idx(self, pts, lbs_pts):
+    def get_lbs_pts_w(self, pts, lbs_pts, method="linear_interpolation"):
         """
-        return the most appropriate lbs point idx for each pts
+        return the most appropriate lbs point weight each pts
+        using different strategy
+
+        method:
+        NN: nearest neighbor
+
+        LI: linear_interpolation
         """
-        # nearest idx
-        # use the nearest vertex
-        knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0))
-        lbs_pts_idx = knn_ret.idx.squeeze()
-        # TODO interpolation
-        return lbs_pts_idx
+        if method == "NN":
+            # use the nearest vertex
+            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 1)
+            lbs_pts_idx = knn_ret.idx.squeeze()
+            pts_w = self.lbs[lbs_pts_idx]
+        elif method == "linear_interpolation":
+            # use inverse distance to interpolate linearly
+            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 4)
+            lbs_pts_idx = knn_ret.idx.squeeze() #(N, 4)
+            lbs_pts_dist = knn_ret.dists.squeeze() #(N, 4)
+            lbs_pts_dist = torch.clamp(lbs_pts_dist, min=1e-6)
+            inv_pts_dist = 1 / lbs_pts_dist # inverse distance
+            weight = inv_pts_dist / inv_pts_dist.sum(dim=1, keepdim=True) # normalize
+            pts_w = (weight.unsqueeze(-1) * self.lbs[lbs_pts_idx]).sum(dim=1) #(N, K, 55) -> (N, 55)
+
+        return pts_w
