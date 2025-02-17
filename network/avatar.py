@@ -182,7 +182,7 @@ class AvatarNet(nn.Module):
 
         return posed_gaussian_vals
 
-    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False):
+    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False, return_pts_w=False):
         # smplx inverse transformation
         # live 2 cano space: inverse LBS
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
@@ -225,7 +225,7 @@ class AvatarNet(nn.Module):
         rot_mats = torch.einsum('nxy,nyz->nxz', pt_mats[..., :3, :3], rot_mats)
         cano_gaussian_vals['rotations'] = pytorch3d.transforms.matrix_to_quaternion(rot_mats)
 
-        return cano_gaussian_vals
+        return cano_gaussian_vals, pts_w
 
     def get_others(self, pose_map, mask, return_map = False):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
@@ -560,9 +560,11 @@ class AvatarNet(nn.Module):
         # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
+        posed_pts_visualize = posed_gaussian_vals["positions"][visualize_mask]
         # inverse LBS
-        cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True)
+        cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
         inverse_cano_pts_visualize = cano_gaussian_vals["positions"][visualize_mask]
+        posed_pts_w_visualize = posed_pts_w[visualize_mask]
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -585,6 +587,8 @@ class AvatarNet(nn.Module):
             'predicted_depth_map': predicted_depth_map,
             "scales": scales,
             "inverse_cano_pts": inverse_cano_pts_visualize,
+            "posed_pts": posed_pts_visualize,
+            "posed_pts_w": posed_pts_w_visualize,
         }
 
         # if not self.training:

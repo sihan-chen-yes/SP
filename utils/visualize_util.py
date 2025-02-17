@@ -213,3 +213,26 @@ def colormap(img, cmap='jet'):
     img = torch.from_numpy(data.copy()).float()
     plt.close()
     return img
+
+def save_ply_w_pts_w(file_path, pts, pts_w):
+    """
+    pts: (N, 3)
+    pts_w: (N, K)
+    """
+    # default visualization joints: left/right hip, idx:1/2
+    visualize_list = [1, 2]
+    assert pts_w.all() <= 1.0 and pts_w.all() >= 0.0
+    normalized_pts_w = np.zeros((pts_w.shape[0], 3), dtype=np.float32)
+    assert len(visualize_list) <= 3
+    for i, j in enumerate(visualize_list):
+        min_val = pts_w[:, j].min()
+        max_val = pts_w[:, j].max()
+        normalized_pts_w[:, i] = (pts_w[:, j] - min_val) / (max_val - min_val)
+
+    colors = (normalized_pts_w * 255).astype(np.uint8)
+
+    point_cloud = trimesh.points.PointCloud(pts)
+
+    point_cloud.colors = colors
+
+    point_cloud.export(file_path)
