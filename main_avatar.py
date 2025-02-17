@@ -666,6 +666,12 @@ class AvatarTrainer:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
             save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts"].cpu().numpy())
+            
+            os.makedirs(output_dir + '/posed_pts', exist_ok = True)
+            visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts"].cpu().numpy(), gs_render["posed_pts_w"].cpu().numpy())
+            # save_mesh_as_ply(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts_w"].cpu().numpy())
+
+
 
 
         # export mask
