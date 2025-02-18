@@ -32,6 +32,7 @@ train:
     opacity: 0.1
     opacity_symmetric: 0.1
     scale: 0.01
+    skinning_weight: 0.1
   finetune_color: false
   batch_size: 1
   num_workers: 8

@@ -260,24 +260,6 @@ class AvatarTrainer:
                 'mask_loss': mask_loss.item(),
             })
 
-        # if self.loss_weight.get('depth', 0.) and 'depth_map' in render_output:
-        #     depth_map = render_output['depth_map'].squeeze(-1)
-        #     template_depth = render_output['template_depth_map'].squeeze(-1)
-        #     template_depth_loss = torch.abs(depth_map - template_depth).mean()
-        #     total_loss += self.loss_weight.get('depth', 0.) * template_depth_loss
-        #     batch_losses.update({
-        #         'template_depth_loss': template_depth_loss.item()
-        #     })
-        #
-        # if self.loss_weight.get('predicted_depth', 0.) and 'predicted_depth_map' in render_output:
-        #     predicted_depth_map = render_output['predicted_depth_map'].squeeze(-1)
-        #     template_depth_map = self.avatar_net.cano_template_depth_map
-        #     cano_template_depth_loss = torch.abs(predicted_depth_map - template_depth_map).mean()
-        #     total_loss += self.loss_weight.get('predicted_depth', 0.) * cano_template_depth_loss
-        #     batch_losses.update({
-        #         'cano_predicted_depth_loss': cano_template_depth_loss.item()
-        #     })
-
         if self.loss_weight.get('lpips', 0.) and 'rgb_map' in render_output:
             # crop images
             random_patch_flag = False if self.iter_idx < 300000 else True
@@ -297,6 +279,7 @@ class AvatarTrainer:
         #     batch_losses.update({
         #         'offset_loss': offset_loss.item()
         #     })
+
         if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
@@ -330,6 +313,16 @@ class AvatarTrainer:
                 'scale_loss': scale_loss.item(),
             })
 
+        if self.loss_weight.get('skinning_weight', 0.) and 'predicted_skinning_weight' in render_output:
+            predicted_skinning_weight = render_output['predicted_skinning_weight']
+            # gt lbs skinning weight via interpolation
+            smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(render_output["cano_pts"], self.avatar_net.lbs_init_points)
+            skinning_weight_loss = torch.abs(predicted_skinning_weight - smplx_skinning_weight).mean()
+            # regularization for predicted_skinning_weight
+            total_loss += self.loss_weight.get('skinning_weight', 0.) * skinning_weight_loss
+            batch_losses.update({
+                'skinning_weight_loss': skinning_weight_loss.item(),
+            })
         # forward_end.record()
 
         # backward_start.record()
@@ -607,7 +600,8 @@ class AvatarTrainer:
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_filtered_%d.ply' % self.iter_idx, gs_render["cano_pts_filtered"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_filtered_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts_filtered"].cpu().numpy())
 
         # training data
         pose_idx, view_idx = self.opt['train'].get('eval_testing_ids', (310, 19))
@@ -646,13 +640,12 @@ class AvatarTrainer:
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_filtered_%d.ply' % self.iter_idx, gs_render["cano_pts_filtered"].cpu().numpy())
+            save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_filtered_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts_filtered"].cpu().numpy())
             
             os.makedirs(output_dir + '/posed_pts', exist_ok = True)
             visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts"].cpu().numpy(), gs_render["posed_pts_w"].cpu().numpy())
-            # save_mesh_as_ply(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts_w"].cpu().numpy())
-
-
+            visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_filtered_%d.ply' % self.iter_idx, gs_render["posed_pts_filtered"].cpu().numpy(), gs_render["posed_pts_w_filtered"].cpu().numpy())
 
 
         # export mask
@@ -1021,11 +1014,6 @@ if __name__ == '__main__':
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # for decoder learning
             trainer.pretrain()
-        # if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_template') \
-        #         and not safe_exists(config.opt['train']['pretrained_dir'])\
-        #         and not safe_exists(config.opt['train']['prev_ckpt']):
-        #     # finetune on template
-        #     trainer.pretrain(template=True)
         trainer.train()
     elif config.opt['mode'] == 'test':
         trainer.test()
