@@ -172,12 +172,24 @@ class AvatarTrainer:
             'position': position_loss.item()
         })
 
+        # predicted depth map loss
         cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
         total_loss += cano_depth_loss
 
-        # predicted depth map loss
         batch_losses.update({
-            'cano_smpl_predicted_depth_loss': cano_depth_loss.item()
+            'cano_predicted_depth_loss': cano_depth_loss.item()
+        })
+
+        # skinning weight loss with smplx
+        predicted_skinning_weight = self.avatar_net.get_predicted_skinning_weight(self.avatar_net.bounding_mask)
+        # gt lbs skinning weight via interpolation
+        smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(position, self.avatar_net.lbs_init_points)
+        # predicted skinning weight map loss
+        cano_skinning_weight_loss = l1_loss(predicted_skinning_weight, smplx_skinning_weight)
+        total_loss += cano_skinning_weight_loss
+
+        batch_losses.update({
+            'cano_predicted_skinning_weight_loss': cano_skinning_weight_loss.item()
         })
 
         total_loss.backward()
