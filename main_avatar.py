@@ -141,75 +141,44 @@ class AvatarTrainer:
         pose_map = items['smpl_pos_map'][:3]
 
         predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
-        predicted_mask = self.avatar_net.get_mask(pose_map)
-        if template:
-            # use clothed template 3d pts to supervise
-            # predict clothed template mask
-            mask = predicted_mask > 0.5
-            position = depth_map_to_pos_map(predicted_depth, mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
-            position_loss = chamfer_loss(position, self.avatar_net.cano_template_init_points)
-        else:
-            # use smplx 3d pts to supervise
-            position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
-            target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
-            position_loss = chamfer_loss(position[target_region],
-                                         self.avatar_net.cano_init_points[target_region])
+        # use smplx 3d pts to supervise
+        position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
+        target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
+        position_loss = chamfer_loss(position[target_region],
+                                     self.avatar_net.cano_init_points[target_region])
 
-            opacity, scales, rotations, opacity_map = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask, return_map=True)
-            opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
-            total_loss += opacity_loss
-            batch_losses.update({
-                'opacity': opacity_loss.item()
-            })
+        # opacity loss
+        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
+        opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
+        total_loss += opacity_loss
+        batch_losses.update({
+            'opacity': opacity_loss.item()
+        })
 
-            scale_loss = l1_loss(scales, self.avatar_net.cano_gaussian_model.get_scaling)
-            total_loss += scale_loss
-            batch_losses.update({
-                'scale': scale_loss.item()
-            })
+        scale_loss = l1_loss(scales, self.avatar_net.cano_gaussian_model.get_scaling)
+        total_loss += scale_loss
+        batch_losses.update({
+            'scale': scale_loss.item()
+        })
 
-            rotation_loss = l1_loss(rotations, self.avatar_net.cano_gaussian_model.get_rotation)
-            total_loss += rotation_loss
-            batch_losses.update({
-                'rotation': rotation_loss.item()
-            })
+        rotation_loss = l1_loss(rotations, self.avatar_net.cano_gaussian_model.get_rotation)
+        total_loss += rotation_loss
+        batch_losses.update({
+            'rotation': rotation_loss.item()
+        })
 
         total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
         })
-        #  dev
-        # self.avatar_net.gen_depth_map()
+
+        cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
+        total_loss += cano_depth_loss
 
         # predicted depth map loss
-        if template:
-            mask_loss = F.binary_cross_entropy(predicted_mask, self.avatar_net.cano_template_mask.float())
-
-            # not gt depth map supervise here
-            cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_template_depth_map)
-
-            batch_losses.update({
-                'template_predicted_mask_loss': mask_loss.item()
-            })
-
-            batch_losses.update({
-                'cano_template_predicted_depth_loss': cano_depth_loss.item()
-            })
-        else:
-            # supervise when pretraining on smplx
-            # mask_loss = F.binary_cross_entropy(predicted_mask, self.avatar_net.cano_smpl_mask.float())
-            # total_loss += mask_loss
-
-            cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
-            total_loss += cano_depth_loss
-
-            # batch_losses.update({
-            #     'smpl_predicted_mask_loss': mask_loss.item()
-            # })
-
-            batch_losses.update({
-                'cano_smpl_predicted_depth_loss': cano_depth_loss.item()
-            })
+        batch_losses.update({
+            'cano_smpl_predicted_depth_loss': cano_depth_loss.item()
+        })
 
         total_loss.backward()
 
