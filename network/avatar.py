@@ -489,8 +489,8 @@ class AvatarNet(nn.Module):
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             skinning_weight = self.get_predicted_skinning_weight(self.bounding_mask) if self.lbs_weight == "NN" else None
             # for visualize
-            visualize_mask = (opacity_map >= 0.5).flatten()
-        cano_pts_visualize = cano_pts[visualize_mask] if not pretrain else cano_pts
+            filtering_mask = (opacity_map >= 0.5).flatten()
+        cano_pts_filtered = cano_pts[filtering_mask] if not pretrain else cano_pts
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -593,12 +593,12 @@ class AvatarNet(nn.Module):
         #
         # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
-
-        posed_pts_visualize = posed_gaussian_vals["positions"][visualize_mask] if not pretrain else posed_gaussian_vals["positions"]
+        posed_pts = posed_gaussian_vals["positions"]
+        posed_pts_filtered = posed_gaussian_vals["positions"][filtering_mask] if not pretrain else posed_gaussian_vals["positions"]
         # inverse LBS
         cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
-        inverse_cano_pts_visualize = cano_gaussian_vals["positions"][visualize_mask] if not pretrain else cano_gaussian_vals["positions"]
-        posed_pts_w_visualize = posed_pts_w[visualize_mask] if not pretrain else posed_pts_w
+        inverse_cano_pts_filtered = cano_gaussian_vals["positions"][filtering_mask] if not pretrain else cano_gaussian_vals["positions"]
+        posed_pts_w_filtered = posed_pts_w[filtering_mask] if not pretrain else posed_pts_w
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -617,12 +617,16 @@ class AvatarNet(nn.Module):
             # 'template_depth_map': template_depth_map,
             # 'cano_template_depth_map': cano_template_depth_map,
             "predicted_mask": opacity_map,
-            "cano_pts": cano_pts_visualize,
+            "cano_pts": cano_pts,
+            "cano_pts_filtered": cano_pts_filtered,
             'predicted_depth_map': predicted_depth_map,
             "scales": scales,
-            "inverse_cano_pts": inverse_cano_pts_visualize,
-            "posed_pts": posed_pts_visualize,
-            "posed_pts_w": posed_pts_w_visualize,
+            "inverse_cano_pts_filtered": inverse_cano_pts_filtered,
+            "posed_pts": posed_pts,
+            "posed_pts_filtered": posed_pts_filtered,
+            "posed_pts_w": posed_pts_w,
+            "posed_pts_w_filtered": posed_pts_w_filtered,
+            'predicted_skinning_weight': skinning_weight,
         }
 
         # if not self.training:
