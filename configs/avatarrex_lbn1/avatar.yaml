@@ -32,6 +32,7 @@ train:
     opacity: 0.1
     opacity_symmetric: 0.1
     scale: 0.01
+    skinning_weight: 0.1
   finetune_color: false
   batch_size: 1
   num_workers: 8
@@ -73,6 +74,8 @@ test:
 model:
   with_viewdirs: true
   random_style: false
+  lbs_weights: NN
+  lbs_weight_interpolation: linear
 
   mlp:
     n_neurons: 64
@@ -96,3 +99,11 @@ model:
     percent_dense: 0.01
     # TODO
     uv_spatial_lr: 0.1
+
+  skinning_network:
+    otype: VanillaMLP
+    n_neurons: 128
+    n_hidden_layers: 4
+    skip_in: [ ]
+    cond_in: [ ]
+    multires: 0
