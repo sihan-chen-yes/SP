@@ -320,8 +320,8 @@ class AvatarNet(nn.Module):
         skinning_weight_map, _ = self.skinning_net([self.skinning_style], self.cano_pos_map[None], randomize_noise = False)
         front_map, back_map = torch.split(skinning_weight_map, [55, 55], 1)
         skinning_weight_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
-        # map skinning weight to [0, 1]
-        skinning_weight_map = torch.sigmoid(skinning_weight_map)
+        # map skinning weight to [0, 1] and sum to 1
+        skinning_weight_map = torch.softmax(skinning_weight_map, dim=-1)
         skinning_weight = skinning_weight_map[mask]
 
         if return_map:
@@ -482,8 +482,6 @@ class AvatarNet(nn.Module):
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
             skinning_weight = self.get_predicted_skinning_weight(self.cano_smpl_mask) if self.lbs_weight == "NN" else None
-            # for visualize
-            visualize_mask = self.cano_smpl_mask
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
@@ -492,7 +490,7 @@ class AvatarNet(nn.Module):
             skinning_weight = self.get_predicted_skinning_weight(self.bounding_mask) if self.lbs_weight == "NN" else None
             # for visualize
             visualize_mask = (opacity_map >= 0.5).flatten()
-        cano_pts_visualize = cano_pts[visualize_mask]
+        cano_pts_visualize = cano_pts[visualize_mask] if not pretrain else cano_pts
 
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -522,7 +520,7 @@ class AvatarNet(nn.Module):
             'rotations': rotations,
             'colors': colors,
             'max_sh_degree': self.max_sh_degree,
-            'skinning': skinning_weight,
+            'skinning_weight': skinning_weight,
         }
 
         # render_ret = render3(
@@ -596,11 +594,11 @@ class AvatarNet(nn.Module):
         # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
 
-        posed_pts_visualize = posed_gaussian_vals["positions"][visualize_mask]
+        posed_pts_visualize = posed_gaussian_vals["positions"][visualize_mask] if not pretrain else posed_gaussian_vals["positions"]
         # inverse LBS
         cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
-        inverse_cano_pts_visualize = cano_gaussian_vals["positions"][visualize_mask]
-        posed_pts_w_visualize = posed_pts_w[visualize_mask]
+        inverse_cano_pts_visualize = cano_gaussian_vals["positions"][visualize_mask] if not pretrain else cano_gaussian_vals["positions"]
+        posed_pts_w_visualize = posed_pts_w[visualize_mask] if not pretrain else posed_pts_w
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
