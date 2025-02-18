@@ -73,6 +73,8 @@ test:
 model:
   with_viewdirs: true
   random_style: false
+  lbs_weight: NN
+  lbs_weight_interpolation: linear
 
   mlp:
     n_neurons: 64
