@@ -75,16 +75,14 @@ class AvatarNet(nn.Module):
 
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.position_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.mask_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.skinning_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 55, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
-        self.position_style = torch.ones([1, self.position_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.position_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
-        self.mask_style = torch.ones([1, self.mask_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.mask_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
+        self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
 
         # TODO separate features encoding?
         # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -268,14 +266,14 @@ class AvatarNet(nn.Module):
     #     feat_map = torch.cat([front_feat_map, back_feat_map], 3)[0].permute(1, 2, 0)
     #     return feat_map
 
-    def get_mask(self, pose_map):
-        mask_map, _ = self.mask_net([self.mask_style], pose_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(mask_map, [1, 1], 1)
-        mask_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
-        # squeeze to [0, 1]
-        mask_map = torch.sigmoid(mask_map)
-
-        return mask_map
+    # def get_mask(self, pose_map):
+    #     mask_map, _ = self.mask_net([self.mask_style], pose_map[None], randomize_noise = False)
+    #     front_map, back_map = torch.split(mask_map, [1, 1], 1)
+    #     mask_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+    #     # squeeze to [0, 1]
+    #     mask_map = torch.sigmoid(mask_map)
+    #
+    #     return mask_map
 
     def get_predicted_depth_offset_map(self, pose_map):
         depth_offset_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
