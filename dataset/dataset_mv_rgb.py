@@ -92,7 +92,7 @@ class MvRgbDatasetBase(Dataset):
         max_xyz[2] += 0.15
         self.cano_bounds = torch.stack([min_xyz, max_xyz], 0).to(torch.float32).numpy()
         self.smpl_faces = self.smpl_model.faces.astype(np.int32)
-
+        self.lbs_weights = self.smpl_model.lbs_weights
         commons._initialize_hands(self)
 
     def __len__(self):
@@ -180,6 +180,7 @@ class MvRgbDatasetBase(Dataset):
         max_xyz = live_smpl.vertices[0].max(0)[0] + 0.15
         live_bounds = torch.stack([min_xyz, max_xyz], 0).to(torch.float32).numpy()
         data_item['live_bounds'] = live_bounds
+        data_item['lbs_weights'] = self.lbs_weights
 
         if training:
             color_img, mask_img = self.load_color_mask_images(pose_idx, view_idx)

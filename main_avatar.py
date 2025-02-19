@@ -180,17 +180,18 @@ class AvatarTrainer:
             'cano_predicted_depth_loss': cano_depth_loss.item()
         })
 
-        # skinning weight loss with smplx
-        predicted_skinning_weight = self.avatar_net.get_predicted_skinning_weight(self.avatar_net.bounding_mask)
-        # gt lbs skinning weight via interpolation
-        smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(position, self.avatar_net.lbs_init_points)
-        # predicted skinning weight map loss
-        cano_skinning_weight_loss = l1_loss(predicted_skinning_weight, smplx_skinning_weight)
-        total_loss += cano_skinning_weight_loss
+        if self.avatar_net.lbs_weights == "NN":
+            # skinning weight loss with smplx
+            predicted_skinning_weight = self.avatar_net.get_predicted_skinning_weight(self.avatar_net.bounding_mask)
+            # gt lbs skinning weight via interpolation
+            smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(position, items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
+            # predicted skinning weight map loss
+            cano_skinning_weight_loss = l1_loss(predicted_skinning_weight, smplx_skinning_weight)
+            total_loss += cano_skinning_weight_loss
 
-        batch_losses.update({
-            'cano_predicted_skinning_weight_loss': cano_skinning_weight_loss.item()
-        })
+            batch_losses.update({
+                'cano_predicted_skinning_weight_loss': cano_skinning_weight_loss.item()
+            })
 
         total_loss.backward()
 
@@ -313,10 +314,10 @@ class AvatarTrainer:
                 'scale_loss': scale_loss.item(),
             })
 
-        if self.loss_weight.get('skinning_weight', 0.) and 'predicted_skinning_weight' in render_output:
+        if self.loss_weight.get('skinning_weight', 0.) and self.avatar_net.lbs_weights == "NN":
             predicted_skinning_weight = render_output['predicted_skinning_weight']
             # gt lbs skinning weight via interpolation
-            smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(render_output["cano_pts"], self.avatar_net.lbs_init_points)
+            smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(render_output["cano_pts"], items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
             skinning_weight_loss = torch.abs(predicted_skinning_weight - smplx_skinning_weight).mean()
             # regularization for predicted_skinning_weight
             total_loss += self.loss_weight.get('skinning_weight', 0.) * skinning_weight_loss
