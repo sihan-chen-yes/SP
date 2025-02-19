@@ -26,7 +26,7 @@ from network.volume import CanoBlendWeightVolume
 from utils.posevocab_custom_ops.nearest_face import nearest_face_pytorch3d
 from utils.knn import knn_gather
 from utils.geo_util import barycentric_interpolate
-
+from utils.network_utils import hierarchical_softmax
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
@@ -93,7 +93,7 @@ class AvatarNet(nn.Module):
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
         if self.lbs_weights == "NN":
-            self.skinning_net = DualStyleUNet(inp_size = self.map_size, inp_ch = 6, out_ch = 55, out_size = self.map_size, style_dim = self.map_size, n_mlp = 2)
+            self.skinning_net = DualStyleUNet(inp_size = self.map_size, inp_ch = 6, out_ch = 55+4, out_size = self.map_size, style_dim = self.map_size, n_mlp = 2)
             self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
 
         # TODO separate features encoding?
@@ -327,10 +327,10 @@ class AvatarNet(nn.Module):
         # TODO pos map handling
         assert self.lbs_weights == "NN"
         skinning_weight_map, _ = self.skinning_net([self.skinning_style], self.cano_pos_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(skinning_weight_map, [55, 55], 1)
+        front_map, back_map = torch.split(skinning_weight_map, [55+4, 55+4], 1)
         skinning_weight_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
         # map skinning weight to [0, 1] and sum to 1
-        skinning_weight_map = torch.softmax(skinning_weight_map, dim=-1)
+        skinning_weight_map = hierarchical_softmax(skinning_weight_map)
         skinning_weight = skinning_weight_map[mask]
 
         if return_map:
