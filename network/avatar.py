@@ -23,13 +23,17 @@ import os
 from utils.obj_io import save_mesh_as_ply
 import root_finding
 from network.volume import CanoBlendWeightVolume
+from utils.posevocab_custom_ops.nearest_face import nearest_face_pytorch3d
+from utils.knn import knn_gather
+from utils.geo_util import barycentric_interpolate
+
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
         super(AvatarNet, self).__init__()
         self.opt = opt
         self.map_size = config.opt['train']['data']['map_size']
-        self.lbs_weight = config.opt['model']['lbs_weight']
+        self.lbs_weights = config.opt['model']['lbs_weights']
         self.lbs_weight_interpolation = config.opt['model']['lbs_weight_interpolation']
 
         self.random_style = opt.get('random_style', False)
@@ -84,12 +88,13 @@ class AvatarNet(nn.Module):
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.skinning_net = DualStyleUNet(inp_size = self.map_size, inp_ch = 6, out_ch = 55, out_size = self.map_size, style_dim = self.map_size, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
-        self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
+        if self.lbs_weights == "NN":
+            self.skinning_net = DualStyleUNet(inp_size = self.map_size, inp_ch = 6, out_ch = 55, out_size = self.map_size, style_dim = self.map_size, n_mlp = 2)
+            self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
 
         # TODO separate features encoding?
         # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -178,7 +183,8 @@ class AvatarNet(nn.Module):
         # cano 2 live space: LBS
         # 1. use NN skinning weight 2.interpolate lbs weight
         if cano_gaussian_vals["skinning_weight"] == None:
-            pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], self.lbs_init_points)
+            # pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], self.lbs_init_points)
+            pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
         else:
             pts_w = cano_gaussian_vals["skinning_weight"]
 
@@ -198,12 +204,14 @@ class AvatarNet(nn.Module):
         # TODO
         # 1. use NN skinning weight 2.interpolate lbs weight
         if posed_gaussian_vals["skinning_weight"] == None:
-            pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-            obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
-            pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], obs_lbs_pts)
+            # pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
+            # obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
+            # pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], obs_lbs_pts)
+            pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], items["live_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
             # inverse LBS transformation matrix
             pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
         else:
+            # pts_w under cano space
             pts_w = posed_gaussian_vals["skinning_weight"]
             pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
             # inverse LBS transformation matrix
@@ -317,6 +325,7 @@ class AvatarNet(nn.Module):
     def get_predicted_skinning_weight(self, mask, return_map = False):
         # use cano pos map as input
         # TODO pos map handling
+        assert self.lbs_weights == "NN"
         skinning_weight_map, _ = self.skinning_net([self.skinning_style], self.cano_pos_map[None], randomize_noise = False)
         front_map, back_map = torch.split(skinning_weight_map, [55, 55], 1)
         skinning_weight_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
@@ -481,13 +490,13 @@ class AvatarNet(nn.Module):
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
-            skinning_weight = self.get_predicted_skinning_weight(self.cano_smpl_mask) if self.lbs_weight == "NN" else None
+            skinning_weight = self.get_predicted_skinning_weight(self.cano_smpl_mask) if self.lbs_weights == "NN" else None
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
-            skinning_weight = self.get_predicted_skinning_weight(self.bounding_mask) if self.lbs_weight == "NN" else None
+            skinning_weight = self.get_predicted_skinning_weight(self.bounding_mask) if self.lbs_weights == "NN" else None
             # for visualize
             filtering_mask = (opacity_map >= 0.5).flatten()
         cano_pts_filtered = cano_pts[filtering_mask] if not pretrain else cano_pts
@@ -650,35 +659,50 @@ class AvatarNet(nn.Module):
 
         return bounding_mask
 
-    def get_lbs_pts_w(self, pts, lbs_pts, lbs_weight=None):
+    def get_lbs_pts_w(self, query_pts, lbs_pts, lbs_weights, faces=None):
         """
         return interpolated lbs weight for each pts
         using different interpolation methods
 
-        method:
-        NN: nearest neighbor
+        input:
+        query_pts: (N, 3)
+        lbs_pts: (V, 3)
+        lbs_weights: (V, 55)
 
-        LI: linear_interpolation
+        faces: (F, 3)
+        method:
+        nearest: nearest neighbor
+
+        linear: linear_interpolation
+
+        barycentric: barycentric_interpolation
         """
         # if no input lbs_weight
         # use smplx lbs weight as default
-        if lbs_weight == None:
-            lbs_weight = self.lbs
+        assert lbs_weights != None
 
         # interpolation via different methods
         if self.lbs_weight_interpolation == "nearest":
             # use the nearest vertex
-            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 1)
+            knn_ret = pytorch3d.ops.knn_points(query_pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 1)
             lbs_pts_idx = knn_ret.idx.squeeze()
-            pts_w = lbs_weight[lbs_pts_idx]
+            pts_w = lbs_weights[lbs_pts_idx]
         elif self.lbs_weight_interpolation == "linear":
             # use inverse distance to interpolate linearly
-            knn_ret = pytorch3d.ops.knn_points(pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 4)
+            knn_ret = pytorch3d.ops.knn_points(query_pts.unsqueeze(0), lbs_pts.unsqueeze(0), K = 4)
             lbs_pts_idx = knn_ret.idx.squeeze() #(N, 4)
             lbs_pts_dist = knn_ret.dists.squeeze() #(N, 4)
             lbs_pts_dist = torch.clamp(lbs_pts_dist, min=1e-6)
             inv_pts_dist = 1 / lbs_pts_dist # inverse distance
             weight = inv_pts_dist / inv_pts_dist.sum(dim=1, keepdim=True) # normalize
-            pts_w = (weight.unsqueeze(-1) * lbs_weight[lbs_pts_idx]).sum(dim=1) #(N, K, 55) -> (N, 55)
+            pts_w = (weight.unsqueeze(-1) * lbs_weights[lbs_pts_idx]).sum(dim=1) #(N, K, 55) -> (N, 55)
+        elif self.lbs_weight_interpolation == "barycentric":
+            assert faces != None
+            dists_to_smpl, face_indices, bc_coords = nearest_face_pytorch3d(query_pts[None], lbs_pts[None], faces)
+            face_vertex_ids = faces[face_indices.squeeze(0)]  # (N, 3)
+
+            face_lbs = lbs_weights[face_vertex_ids]  # (N, 3, 55)
+
+            pts_w = (bc_coords.squeeze(0)[..., None] * face_lbs).sum(1)  # (N, 55)
 
         return pts_w
