@@ -543,4 +543,6 @@ def hierarchical_softmax(x):
     prob_all[:, [26, 29, 32, 35, 38, 41, 44, 47, 50, 53]] = prob_all[:, [26, 29, 32, 35, 38, 41, 44, 47, 50, 53]] * (1 - sigmoid_x[:, [27, 30, 33, 36, 39, 42, 45, 48, 51, 54]])
 
     prob_all = prob_all.reshape(height, width, 55)
+
+    assert torch.allclose(prob_all.sum(dim=-1), torch.ones_like(prob_all.sum(dim=-1)), atol=1e-6)
     return prob_all
