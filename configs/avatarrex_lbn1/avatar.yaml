@@ -74,8 +74,8 @@ test:
 model:
   with_viewdirs: true
   random_style: false
-  lbs_weights: lbs_weights
-  lbs_weight_interpolation: barycentric
+  lbs_weights: NN
+  lbs_weight_interpolation: linear
 
   mlp:
     n_neurons: 64
@@ -99,3 +99,11 @@ model:
     percent_dense: 0.01
     # TODO
     uv_spatial_lr: 0.1
+
+  skinning_network:
+    otype: VanillaMLP
+    n_neurons: 128
+    n_hidden_layers: 4
+    skip_in: [ ]
+    cond_in: [ ]
+    multires: 0

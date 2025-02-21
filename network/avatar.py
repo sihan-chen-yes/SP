@@ -26,7 +26,7 @@ from network.volume import CanoBlendWeightVolume
 from utils.posevocab_custom_ops.nearest_face import nearest_face_pytorch3d
 from utils.knn import knn_gather
 from utils.geo_util import barycentric_interpolate
-from utils.network_utils import hierarchical_softmax
+from utils.network_utils import hierarchical_softmax, get_skinning_mlp
 
 class AvatarNet(nn.Module):
     def __init__(self, opt):
@@ -93,8 +93,7 @@ class AvatarNet(nn.Module):
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
         if self.lbs_weights == "NN":
-            self.skinning_net = DualStyleUNet(inp_size = self.map_size, inp_ch = 6, out_ch = 55+4, out_size = self.map_size, style_dim = self.map_size, n_mlp = 2)
-            self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
+            self.skinning_net = get_skinning_mlp(3, 55+4, config.opt['model']['skinning_network'])
 
         # TODO separate features encoding?
         # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -102,7 +101,7 @@ class AvatarNet(nn.Module):
         # position + rotation + scaling + opacity + color
         # self.mlp_decoder = VanillaCondMLP(opt["feat_dim"], 0, 3 + 4 + 3 + 1 + 3, opt["mlp"])
 
-        self.template_points = trimesh.load(config.opt['train']['data']['data_dir'] + '/template_raw.ply', process = False)
+        # self.template_points = trimesh.load(config.opt['train']['data']['data_dir'] + '/template_raw.ply', process = False)
 
 
         if self.with_viewdirs:
@@ -322,21 +321,12 @@ class AvatarNet(nn.Module):
                                                  + self.cano_smpl_depth_offset_map_min + 10)
         return depth_map
 
-    def get_predicted_skinning_weight(self, mask, return_map = False):
-        # use cano pos map as input
-        # TODO pos map handling
+    def get_predicted_skinning_weight(self, cano_pts):
+        # use cano pts as input
         assert self.lbs_weights == "NN"
-        skinning_weight_map, _ = self.skinning_net([self.skinning_style], self.cano_pos_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(skinning_weight_map, [55+4, 55+4], 1)
-        skinning_weight_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
-        # map skinning weight to [0, 1] and sum to 1
-        skinning_weight_map = hierarchical_softmax(skinning_weight_map)
-        skinning_weight = skinning_weight_map[mask]
-
-        if return_map:
-            return skinning_weight, skinning_weight_map
-        else:
-            return skinning_weight
+        pts_w = self.skinning_net(cano_pts)
+        pts_w = hierarchical_softmax(pts_w)
+        return pts_w
 
     # def get_interpolated_feat(self, pose_map):
     #     # [1024, 2048, 64]
@@ -490,13 +480,13 @@ class AvatarNet(nn.Module):
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
-            skinning_weight = self.get_predicted_skinning_weight(self.cano_smpl_mask) if self.lbs_weights == "NN" else None
+            skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
-            skinning_weight = self.get_predicted_skinning_weight(self.bounding_mask) if self.lbs_weights == "NN" else None
+            skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
             # for visualize
             filtering_mask = (opacity_map >= 0.5).flatten()
         cano_pts_filtered = cano_pts[filtering_mask] if not pretrain else cano_pts

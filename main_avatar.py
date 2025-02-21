@@ -180,7 +180,7 @@ class AvatarTrainer:
 
         if self.avatar_net.lbs_weights == "NN":
             # skinning weight loss with smplx
-            predicted_skinning_weight = self.avatar_net.get_predicted_skinning_weight(self.avatar_net.bounding_mask)
+            predicted_skinning_weight = self.avatar_net.get_predicted_skinning_weight(position)
             # gt lbs skinning weight via interpolation
             smplx_skinning_weight = self.avatar_net.get_lbs_pts_w(position, items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
             # predicted skinning weight map loss
