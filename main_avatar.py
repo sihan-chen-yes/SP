@@ -138,7 +138,7 @@ class AvatarTrainer:
         l1_loss = torch.nn.L1Loss()
 
         items = net_util.delete_batch_idx(items)
-        pose_map = items['smpl_pos_map'][:3]
+        pose_map = items['smpl_pos_map']
 
         predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
         # use smplx 3d pts to supervise

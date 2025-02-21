@@ -71,15 +71,13 @@ class AvatarNet(nn.Module):
         self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/init_pts_lbs.npy'.format(self.map_size))).to(torch.float32).to(config.device)
 
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
-        self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.skinning_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 55, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 6, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 6, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 6, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
-        self.skinning_style = torch.ones([1, self.skinning_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.skinning_net.style_dim)
 
         # TODO separate features encoding?
         # self.feature_net = DualStyleUNet(inp_size = 512, inp_ch = 3, out_ch = opt["feat_dim"], out_size = 1024, style_dim = 512, n_mlp = 2)
@@ -367,12 +365,12 @@ class AvatarNet(nn.Module):
         Note that no batch index in items.
         """
         bg_color = torch.from_numpy(np.asarray(bg_color)).to(torch.float32).to(config.device)
-        pose_map = items['smpl_pos_map'][:3]
+        pose_map = items['smpl_pos_map']
         assert not (use_pca and use_vae), "Cannot use both PCA and VAE!"
         if use_pca:
-            pose_map = items['smpl_pos_map_pca'][:3]
+            pose_map = items['smpl_pos_map_pca']
         if use_vae:
-            pose_map = items['smpl_pos_map_vae'][:3]
+            pose_map = items['smpl_pos_map_vae']
 
         # if not self.training:
         # scales = torch.clip(scales, 0., 0.03)
