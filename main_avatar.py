@@ -635,8 +635,8 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy())
-            save_mesh_as_ply(output_dir + '/cano_pts/iter_filtered_%d.ply' % self.iter_idx, gs_render["cano_pts_filtered"].cpu().numpy())
+            visualize_util.save_ply_w_pts_w(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy(), gs_render["cano_pts_w"].cpu().numpy())
+            visualize_util.save_ply_w_pts_w(output_dir + '/cano_pts/iter_filtered_%d.ply' % self.iter_idx, gs_render["cano_pts_filtered"].cpu().numpy(), gs_render["cano_pts_w_filtered"].cpu().numpy())
             save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_filtered_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts_filtered"].cpu().numpy())
             
             os.makedirs(output_dir + '/posed_pts', exist_ok = True)
