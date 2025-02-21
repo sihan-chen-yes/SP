@@ -18,7 +18,7 @@ import trimesh
 from pytorch3d.ops import knn_points
 from utils.general_utils import inverse_sigmoid
 from utils.renderer.renderer_pytorch3d import Renderer
-from utils.graphics_utils import get_orthographic_camera, depth_to_position, depth_map_to_pos_map
+from utils.graphics_utils import get_orthographic_camera, depth_to_position, depth_map_to_pos_map, position_to_depth
 import os
 from utils.obj_io import save_mesh_as_ply
 import root_finding
@@ -593,10 +593,19 @@ class AvatarNet(nn.Module):
         # template_mask_map = template_render_ret['mask'].permute(1, 2, 0)
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
         posed_pts = posed_gaussian_vals["positions"]
-        posed_pts_filtered = posed_gaussian_vals["positions"][filtering_mask] if not pretrain else posed_gaussian_vals["positions"]
         # inverse LBS
         cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
         inverse_cano_pts_filtered = cano_gaussian_vals["positions"][filtering_mask] if not pretrain else cano_gaussian_vals["positions"]
+        # posed_pts_w_filtered = posed_pts_w[filtering_mask] if not pretrain else posed_pts_w
+
+        # for debug
+        # posed_pts_map = posed_pts.reshape(512, 1024, 3)
+        # posed_pts_front_depth = position_to_depth(self.front_camera, posed_pts_map[:, :512].reshape(-1, 3).unsqueeze(0))
+        # posed_pts_back_depth = position_to_depth(self.back_camera, posed_pts_map[:, 512:].reshape(-1, 3).unsqueeze(0))
+        # posed_pts_depth = torch.cat([posed_pts_front_depth, posed_pts_back_depth], dim=1)
+        # atol = 0.01
+        # pts_w_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
+        posed_pts_filtered = posed_gaussian_vals["positions"][filtering_mask] if not pretrain else posed_gaussian_vals["positions"]
         posed_pts_w_filtered = posed_pts_w[filtering_mask] if not pretrain else posed_pts_w
         ret = {
             'rgb_map': rgb_map,

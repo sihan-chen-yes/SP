@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 import cv2 as cv
 import trimesh
-
+import matplotlib.pyplot as plt
 
 def pos_map_to_mesh(pos_map: torch.Tensor):
     pd = (0, 0, 1 if pos_map.shape[1] % 2 == 1 else 0, 0, 1 if pos_map.shape[0] % 2 == 1 else 0, 0)
@@ -214,25 +214,39 @@ def colormap(img, cmap='jet'):
     plt.close()
     return img
 
-def save_ply_w_pts_w(file_path, pts, pts_w):
-    """
-    pts: (N, 3)
-    pts_w: (N, K)
-    """
-    # default visualization joints: left/right hip, idx:1/2
-    visualize_list = [1, 2]
-    assert pts_w.all() <= 1.0 and pts_w.all() >= 0.0
-    normalized_pts_w = np.zeros((pts_w.shape[0], 3), dtype=np.float32)
-    assert len(visualize_list) <= 3
-    for i, j in enumerate(visualize_list):
-        min_val = pts_w[:, j].min()
-        max_val = pts_w[:, j].max()
-        normalized_pts_w[:, i] = (pts_w[:, j] - min_val) / (max_val - min_val)
+# def save_ply_w_pts_w(file_path, pts, pts_w):
+#     """
+#     pts: (N, 3)
+#     pts_w: (N, K)
+#     """
+#     # default visualization joints: left/right hip, idx:1/2
+#     visualize_list = [1, 2]
+#     assert np.all(pts_w <= 1.0) and np.all(pts_w >= 0.0) and np.allclose(pts_w.sum(axis=-1), np.ones_like(pts_w.sum(axis=-1)), atol=1e-6)
+#     # normalized_pts_w = np.zeros((pts_w.shape[0], 3), dtype=np.float32)
+#     # assert len(visualize_list) <= 3
+#     # for i, j in enumerate(visualize_list):
+#     #     min_val = pts_w[:, j].min()
+#     #     max_val = pts_w[:, j].max()
+#     #     normalized_pts_w[:, i] = (pts_w[:, j] - min_val) / (max_val - min_val)
+#     #
+#     # colors = (normalized_pts_w * 255).astype(np.uint8)
+#     #
+#     # point_cloud = trimesh.points.PointCloud(pts)
+#     #
+#     # point_cloud.colors = colors
+#     #
+#     # point_cloud.export(file_path)
 
-    colors = (normalized_pts_w * 255).astype(np.uint8)
+def save_ply_w_pts_w(file_path, pts, pts_w):
+    num_joints = pts_w.shape[1]
+    cmap = plt.get_cmap("tab20")
+    joint_colors = np.array([cmap(i % 20)[:3] for i in range(num_joints)], dtype=np.float32)  # (K, 3)
+
+    vertex_colors = np.matmul(pts_w, joint_colors)  # (N, 3)
+
+    vertex_colors = (vertex_colors * 255).astype(np.uint8)
 
     point_cloud = trimesh.points.PointCloud(pts)
-
-    point_cloud.colors = colors
+    point_cloud.colors = vertex_colors
 
     point_cloud.export(file_path)
