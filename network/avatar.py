@@ -481,6 +481,8 @@ class AvatarNet(nn.Module):
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
             skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
+            # cano_pts has been filtered already
+            filtering_mask = torch.ones_like(cano_pts).flatten()
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
@@ -488,9 +490,12 @@ class AvatarNet(nn.Module):
             colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
             skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
             # for visualize
-            filtering_mask = (opacity_map >= 0.5).flatten()
-        cano_pts_filtered = cano_pts[filtering_mask] if not pretrain else cano_pts
-
+            # filtering_mask = (opacity_map >= 0.5).flatten()
+            atol = 0.01
+            filtering_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
+        cano_pts_w = skinning_weight
+        cano_pts_w_filtered = cano_pts_w[filtering_mask]
+        cano_pts_filtered = cano_pts[filtering_mask]
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
             import utils.geo_util as geo_util
@@ -594,19 +599,18 @@ class AvatarNet(nn.Module):
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
         posed_pts = posed_gaussian_vals["positions"]
         # inverse LBS
-        cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
-        inverse_cano_pts_filtered = cano_gaussian_vals["positions"][filtering_mask] if not pretrain else cano_gaussian_vals["positions"]
-        # posed_pts_w_filtered = posed_pts_w[filtering_mask] if not pretrain else posed_pts_w
+        inverse_cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
+        inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
 
-        # for debug
+        # for debug use posed pts depth to filter
         # posed_pts_map = posed_pts.reshape(512, 1024, 3)
         # posed_pts_front_depth = position_to_depth(self.front_camera, posed_pts_map[:, :512].reshape(-1, 3).unsqueeze(0))
         # posed_pts_back_depth = position_to_depth(self.back_camera, posed_pts_map[:, 512:].reshape(-1, 3).unsqueeze(0))
         # posed_pts_depth = torch.cat([posed_pts_front_depth, posed_pts_back_depth], dim=1)
         # atol = 0.01
         # pts_w_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
-        posed_pts_filtered = posed_gaussian_vals["positions"][filtering_mask] if not pretrain else posed_gaussian_vals["positions"]
-        posed_pts_w_filtered = posed_pts_w[filtering_mask] if not pretrain else posed_pts_w
+        posed_pts_filtered = posed_pts[filtering_mask]
+        posed_pts_w_filtered = posed_pts_w[filtering_mask]
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -625,15 +629,20 @@ class AvatarNet(nn.Module):
             # 'template_depth_map': template_depth_map,
             # 'cano_template_depth_map': cano_template_depth_map,
             "predicted_mask": opacity_map,
+
             "cano_pts": cano_pts,
             "cano_pts_filtered": cano_pts_filtered,
-            'predicted_depth_map': predicted_depth_map,
-            "scales": scales,
+            "cano_pts_w": cano_pts_w,
+            "cano_pts_w_filtered": cano_pts_w_filtered,
             "inverse_cano_pts_filtered": inverse_cano_pts_filtered,
             "posed_pts": posed_pts,
             "posed_pts_filtered": posed_pts_filtered,
             "posed_pts_w": posed_pts_w,
             "posed_pts_w_filtered": posed_pts_w_filtered,
+
+            'predicted_depth_map': predicted_depth_map,
+            "scales": scales,
+
             'predicted_skinning_weight': skinning_weight,
         }
 
