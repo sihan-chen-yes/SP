@@ -33,6 +33,7 @@ from pytorch3d.renderer import (
 )
 from utils.graphics_utils import get_orthographic_camera, depth_map_to_pos_map
 from utils.losses import chamfer_loss, bound_loss
+import yaml
 def safe_exists(path):
     if path is None:
         return False
@@ -339,7 +340,7 @@ class AvatarTrainer:
 
         return total_loss, batch_losses, render_output
 
-    def pretrain(self, template=False):
+    def pretrain(self, timestamp):
         dataset_module = self.opt['train'].get('dataset', 'MvRgbDatasetAvatarReX')
         MvRgbDataset = importlib.import_module('dataset.dataset_mv_rgb').__getattribute__(dataset_module)
         self.dataset = MvRgbDataset(**self.opt['train']['data'])
@@ -353,26 +354,13 @@ class AvatarTrainer:
                                                  drop_last = True)
 
         # tb writer
-        log_dir = self.opt['train']['net_ckpt_dir'] + '/' + datetime.datetime.now().strftime('pretrain_%Y_%m_%d_%H_%M_%S')
+        log_dir = self.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('pretrain_%Y_%m_%d_%H_%M_%S')
         writer = SummaryWriter(log_dir)
         smooth_interval = 10
         smooth_count = 0
         smooth_losses = {}
         self.iter_idx = 0
-        if template:
-            print("using param pretrained on smplx")
-            # loading ckpt from smplx pretrain
-            if safe_exists(self.opt['train']['pretrained_dir']):
-                self.load_ckpt(self.opt['train']['pretrained_dir'], load_optm=False)
-            elif safe_exists(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl'):
-                print("pretrain on template\n")
-                self.load_ckpt(self.opt['train']['net_ckpt_dir'] + '/pretrained_smpl', load_optm=False)
-            else:
-                raise FileNotFoundError('Cannot find smplx pretrained checkpoint!')
-
-            self.optm.state = collections.defaultdict(dict)
-        else:
-            print("pretraining on smplx")
+        print("pretraining on smplx")
 
         for epoch_idx in range(0, 9999999):
             self.epoch_idx = epoch_idx
@@ -381,7 +369,7 @@ class AvatarTrainer:
                 items = to_cuda(items)
 
                 # one_step_start.record()
-                total_loss, batch_losses = self.forward_one_pass_pretrain(items, template=template)
+                total_loss, batch_losses = self.forward_one_pass_pretrain(items)
                 # one_step_end.record()
                 # torch.cuda.synchronize()
                 # print('One step costs %f secs' % (one_step_start.elapsed_time(one_step_end) / 1000.))
@@ -411,17 +399,17 @@ class AvatarTrainer:
                         eval_cano_pts = True
                     else:
                         eval_cano_pts = False
-                    self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts, template=template)
+                    self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts)
 
                 if self.iter_idx == self.opt['train']['pretrain_iters']:
                     model_folder = self.opt['train']['net_ckpt_dir']
-                    model_folder += '/pretrained_template' if template else '/pretrained_smpl'
+                    model_folder += '/pretrained_smpl'
                     os.makedirs(model_folder, exist_ok = True)
                     self.save_ckpt(model_folder, save_optm = True)
                     self.iter_idx = 0
                     return
 
-    def train(self):
+    def train(self, timestamp):
         dataset_module = self.opt['train'].get('dataset', 'MvRgbDatasetAvatarReX')
         MvRgbDataset = importlib.import_module('dataset.dataset_mv_rgb').__getattribute__(dataset_module)
         self.dataset = MvRgbDataset(**self.opt['train']['data'])
@@ -465,7 +453,7 @@ class AvatarTrainer:
         # one_step_end = torch.cuda.Event(enable_timing = True)
 
         # tb writer
-        log_dir = self.opt['train']['net_ckpt_dir'] + '/' + datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        log_dir = self.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('%Y_%m_%d_%H_%M_%S')
         writer = SummaryWriter(log_dir)
         yaml.dump(self.opt, open(log_dir + '/config_bk.yaml', 'w'), sort_keys = False)
         smooth_interval = 10
@@ -538,7 +526,7 @@ class AvatarTrainer:
                         self.save_ckpt(model_folder, save_optm = True)
 
                     if self.iter_idx == self.iter_num or self.iter_idx == self.opt['train']['train_iters']:
-                        print('# Training is done:' + self.opt['train']['train_iters'])
+                        print(f'# Training is done: {self.opt["train"]["train_iters"]}')
                         return
 
                     self.iter_idx += 1
@@ -1006,6 +994,13 @@ if __name__ == '__main__':
 
     # set training results directory
     config.opt['train']['net_ckpt_dir'] = args.dir
+    timestamp = datetime.datetime.now()
+    log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
+    writer = SummaryWriter(log_dir)
+
+    print(yaml.safe_dump(config.opt, sort_keys=False))
+    with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
+        fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
 
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
@@ -1013,8 +1008,8 @@ if __name__ == '__main__':
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
             # for decoder learning
-            trainer.pretrain()
-        trainer.train()
+            trainer.pretrain(timestamp=timestamp)
+        trainer.train(timestamp=timestamp)
     elif config.opt['mode'] == 'test':
         trainer.test()
     else:
