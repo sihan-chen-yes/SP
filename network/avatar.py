@@ -29,7 +29,7 @@ class AvatarNet(nn.Module):
 
         self.random_style = opt.get('random_style', False)
         self.with_viewdirs = opt.get('with_viewdirs', True)
-
+        self.depth_segments = opt.get('depth_segments', 32)
         # read preprocessed depth map: 1.mesh based 2.pts based
         # for 1. smplx  2. template
         cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}/cano_smpl_depth_map_pts_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
@@ -74,7 +74,7 @@ class AvatarNet(nn.Module):
         self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
-        self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
+        self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = self.depth_segments + 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
@@ -216,22 +216,21 @@ class AvatarNet(nn.Module):
     #
     #     return mask_map
 
-    def get_predicted_depth_offset_map(self, pose_map):
-        depth_offset_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(depth_offset_map, [1, 1], 1)
-        depth_offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
-        # map to [-1, 1]
-        # 0 for background
-        depth_offset_map = torch.nn.functional.tanh(depth_offset_map)
-        return depth_offset_map
+    def get_predicted_depth_offset_prob_map(self, pose_map):
+        depth_offset_logits_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
+        front_map, back_map = torch.split(depth_offset_logits_map, [self.depth_segments + 1, self.depth_segments + 1], 1)
+        depth_offset_logits_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+        # map to [0, 1] for probability
+        depth_offset_prob_map = torch.nn.functional.softmax(depth_offset_logits_map, dim=-1)
+        return depth_offset_prob_map
 
     def get_predicted_depth_map(self, pose_map):
-        depth_offset_map = self.get_predicted_depth_offset_map(pose_map)
+        # [H, W, segments+1]
+        depth_offset_prob_map = self.get_predicted_depth_offset_prob_map(pose_map)
         # recover depth offset to depth
-        depth_map = depth_offset_map.clone()
-        depth_map = (depth_map + 1) / 2
-        depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
-                                                 + self.cano_smpl_depth_offset_map_min + 10)
+        depth_map = torch.linspace(self.cano_smpl_depth_offset_map_min, self.cano_smpl_depth_offset_map_max, steps=self.depth_segments + 1).to(depth_offset_prob_map.device)
+        # [H, W]
+        depth_map = (depth_map * depth_offset_prob_map).sum(dim=-1) + 10.0
         return depth_map
 
     # def get_interpolated_feat(self, pose_map):
