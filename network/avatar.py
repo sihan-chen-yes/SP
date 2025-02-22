@@ -45,8 +45,9 @@ class AvatarNet(nn.Module):
         # depth offset normalized
         self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
         self.cano_smpl_depth_offset_map = self.cano_smpl_depth_offset_map - 10
-        self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max()
-        self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min()
+        # depth expansion
+        self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max() * 1.1
+        self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min() * 1.1
 
         # init canonical gausssian model
         self.max_sh_degree = 0
