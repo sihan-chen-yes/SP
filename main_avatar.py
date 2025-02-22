@@ -147,7 +147,7 @@ class AvatarTrainer:
                                      self.avatar_net.cano_init_points[target_region])
 
         # opacity loss
-        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask, return_map=True)
+        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
         opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
         total_loss += opacity_loss
         batch_losses.update({
