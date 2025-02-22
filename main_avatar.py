@@ -413,7 +413,7 @@ class AvatarTrainer:
                         eval_cano_pts = False
                     self.mini_test(pretraining = True, eval_cano_pts=eval_cano_pts, template=template)
 
-                if self.iter_idx == 5000:
+                if self.iter_idx == self.opt['train']['pretrain_iters']:
                     model_folder = self.opt['train']['net_ckpt_dir']
                     model_folder += '/pretrained_template' if template else '/pretrained_smpl'
                     os.makedirs(model_folder, exist_ok = True)
@@ -537,8 +537,8 @@ class AvatarTrainer:
                         os.makedirs(model_folder, exist_ok = True)
                         self.save_ckpt(model_folder, save_optm = True)
 
-                    if self.iter_idx == self.iter_num:
-                        print('# Training is done.')
+                    if self.iter_idx == self.iter_num or self.iter_idx == self.opt['train']['train_iters']:
+                        print('# Training is done:' + self.opt['train']['train_iters'])
                         return
 
                     self.iter_idx += 1
@@ -997,11 +997,15 @@ if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument('-c', '--config_path', type = str, help = 'Configuration file path.')
     arg_parser.add_argument('-m', '--mode', type = str, help = 'Running mode.', default = 'train')
+    arg_parser.add_argument('-d', '--dir', type=str, help='result directory path')
     args = arg_parser.parse_args()
 
     config.load_global_opt(args.config_path)
     if args.mode is not None:
         config.opt['mode'] = args.mode
+
+    # set training results directory
+    config.opt['train']['net_ckpt_dir'] = args.dir
 
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':

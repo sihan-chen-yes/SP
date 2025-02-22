@@ -21,6 +21,8 @@ train:
   eval_training_ids: [481, 0]
   eval_testing_ids: [507, 8]
   eval_img_factor: 1.0
+  pretrain_iters: 5_000
+  train_iters: 45_000
   lr_init: 0.0005
   loss_weight:
     l1: 1.0
@@ -30,7 +32,7 @@ train:
     predicted_depth: 0.1
     offset: 0.005
     opacity: 0.1
-    opacity_symmetric: 0.1
+    opacity_symmetric: 0.003
     scale: 0.01
     skinning_weight: 0.1
   finetune_color: false
@@ -75,7 +77,7 @@ model:
   with_viewdirs: true
   random_style: false
   lbs_weights: lbs_weights
-  lbs_weight_interpolation: barycentric
+  lbs_weight_interpolation: linear
 
   mlp:
     n_neurons: 64
