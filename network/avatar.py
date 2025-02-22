@@ -360,7 +360,7 @@ class AvatarNet(nn.Module):
 
 
 
-    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False, template=False):
+    def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
         """
         Note that no batch index in items.
         """
