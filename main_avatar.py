@@ -143,8 +143,6 @@ class AvatarTrainer:
         # use smplx 3d pts to supervise
         position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
         opacity, scales, rotations, xy_nr_offset = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
-        # apply xy nr offset
-        position[:, :2] = position[:, :2] + xy_nr_offset
 
         target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
         # position loss
@@ -154,12 +152,6 @@ class AvatarTrainer:
         total_loss += position_loss
         batch_losses.update({
             'position': position_loss.item()
-        })
-
-        xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
-        total_loss += xy_nr_offset_loss
-        batch_losses.update({
-            'xy_nr_offset': xy_nr_offset_loss.item()
         })
 
         # opacity loss
