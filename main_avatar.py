@@ -142,12 +142,27 @@ class AvatarTrainer:
         predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
         # use smplx 3d pts to supervise
         position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
+        opacity, scales, rotations, xy_nr_offset = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
+        # apply xy nr offset
+        position[:, :2] = position[:, :2] + xy_nr_offset
+
         target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
+        # position loss
         position_loss = chamfer_loss(position[target_region],
                                      self.avatar_net.cano_init_points[target_region])
 
+        total_loss += position_loss
+        batch_losses.update({
+            'position': position_loss.item()
+        })
+
+        xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+        total_loss += xy_nr_offset_loss
+        batch_losses.update({
+            'xy_nr_offset': xy_nr_offset_loss.item()
+        })
+
         # opacity loss
-        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
         opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
         total_loss += opacity_loss
         batch_losses.update({
@@ -164,11 +179,6 @@ class AvatarTrainer:
         total_loss += rotation_loss
         batch_losses.update({
             'rotation': rotation_loss.item()
-        })
-
-        total_loss += position_loss
-        batch_losses.update({
-            'position': position_loss.item()
         })
 
         cano_depth_loss = l1_loss(predicted_depth, self.avatar_net.cano_smpl_depth_map)
@@ -213,7 +223,6 @@ class AvatarTrainer:
         # forward_start.record()
         render_output = self.avatar_net.render(items, self.bg_color)
         image = render_output['rgb_map'].permute(2, 0, 1)
-        offset = render_output['offset']
 
         # mask image & set bg color
         items['color_img'][~items['mask_img']] = self.bg_color_cuda
@@ -259,13 +268,6 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        # if self.loss_weight['offset'] > 0.:
-        #     offset_loss = torch.linalg.norm(offset, dim = -1).mean()
-        #     total_loss += self.loss_weight['offset'] * offset_loss
-        #     batch_losses.update({
-        #         'offset_loss': offset_loss.item()
-        #     })
-
         if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
@@ -297,6 +299,15 @@ class AvatarTrainer:
             total_loss += self.loss_weight.get('scale', 0.) * scale_loss
             batch_losses.update({
                 'scale_loss': scale_loss.item(),
+            })
+
+        if self.loss_weight.get('xy_nr_offset', 0.) and 'xy_nr_offset' in render_output:
+            xy_nr_offset = render_output['xy_nr_offset']
+            # regularization for xy_nr_offset
+            xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+            total_loss += self.loss_weight.get('xy_nr_offset', 0.) * xy_nr_offset_loss
+            batch_losses.update({
+                'xy_nr_offset_loss': xy_nr_offset_loss.item(),
             })
 
         # forward_end.record()

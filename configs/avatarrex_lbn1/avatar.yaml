@@ -34,6 +34,7 @@ train:
     opacity: 0.1
     opacity_symmetric: 0.003
     scale: 0.01
+    xy_nr_offset: 0.01
   finetune_color: false
   batch_size: 1
   num_workers: 8
