@@ -127,7 +127,7 @@ class AvatarTrainer:
         ).mean()
         return lpips_loss
     #TODO
-    def forward_one_pass_pretrain(self, items, template=False):
+    def forward_one_pass_pretrain(self, items):
         total_loss = 0
         batch_losses = {}
         if self.random_bg_color:
@@ -139,15 +139,19 @@ class AvatarTrainer:
         items = net_util.delete_batch_idx(items)
         pose_map = items['smpl_pos_map'][:3]
 
-        predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
+        predicted_depth, xy_nr_offset_map = self.avatar_net.get_predicted_position_map(pose_map)
+        xy_nr_offset = xy_nr_offset_map.view(-1, 2)
         # use smplx 3d pts to supervise
         position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
+        position[:, :2] = position[:, :2] + xy_nr_offset
+        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
+
         target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
+        # position loss
         position_loss = chamfer_loss(position[target_region],
                                      self.avatar_net.cano_init_points[target_region])
 
         # opacity loss
-        opacity, scales, rotations, opacity_map = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask, return_map=True)
         opacity_loss = l1_loss(opacity, self.avatar_net.cano_gaussian_model.get_opacity)
         total_loss += opacity_loss
         batch_losses.update({
@@ -226,7 +230,6 @@ class AvatarTrainer:
         # forward_start.record()
         render_output = self.avatar_net.render(items, self.bg_color)
         image = render_output['rgb_map'].permute(2, 0, 1)
-        offset = render_output['offset']
 
         # mask image & set bg color
         items['color_img'][~items['mask_img']] = self.bg_color_cuda
@@ -238,7 +241,6 @@ class AvatarTrainer:
         # cv.imshow('image', image.detach().permute(1, 2, 0).cpu().numpy())
         # cv.imshow('gt_image', gt_image.permute(1, 2, 0).cpu().numpy())
         # cv.waitKey(0)
-        l1_loss = torch.nn.L1Loss()
 
         if self.loss_weight.get('l1', 0.) and 'rgb_map' in render_output:
             l1_loss = torch.abs(image - gt_image).mean()
@@ -383,6 +385,16 @@ class AvatarTrainer:
             total_loss += self.loss_weight.get('aiap_cov', 0.) * aiap_cov_loss
             batch_losses.update({
                 'aiap_cov_loss': aiap_cov_loss.item(),
+            })
+
+        if self.loss_weight.get('xy_nr_offset', 0.) and 'xy_nr_offset' in render_output:
+            xy_nr_offset = render_output['xy_nr_offset']
+            # regularization for xy_nr_offset
+            # xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+            xy_nr_offset_loss = torch.linalg.norm(xy_nr_offset, dim = -1).mean()
+            total_loss += self.loss_weight.get('xy_nr_offset', 0.) * xy_nr_offset_loss
+            batch_losses.update({
+                'xy_nr_offset_loss': xy_nr_offset_loss.item(),
             })
 
         # forward_end.record()
@@ -607,7 +619,7 @@ class AvatarTrainer:
                 self.save_ckpt(latest_folder)
 
     @torch.no_grad()
-    def mini_test(self, pretraining = False, eval_cano_pts = False, template=False):
+    def mini_test(self, pretraining = False, eval_cano_pts = False):
         self.avatar_net.eval()
 
         img_factor = self.opt['train'].get('eval_img_factor', 1.0)
@@ -627,7 +639,7 @@ class AvatarTrainer:
                                     exact_hand_pose = True)
         items = net_util.to_cuda(item, add_batch = False)
 
-        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining, template=template)
+        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining)
         # gs_render = self.avatar_net.render_debug(items)
         rgb_map = gs_render['rgb_map']
         rgb_map.clip_(0., 1.)
@@ -638,7 +650,7 @@ class AvatarTrainer:
             output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/training'
         else:
             output_dir = self.opt['train']['net_ckpt_dir']
-            output_dir += '/eval_pretrain_template/training' if template else '/eval_pretrain_smpl/training'
+            output_dir += '/eval_pretrain_smpl/training'
         gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
         if gt_image is not None:
             gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
@@ -678,7 +690,7 @@ class AvatarTrainer:
             output_dir = self.opt['train']['net_ckpt_dir'] + '/eval/testing'
         else:
             output_dir = self.opt['train']['net_ckpt_dir']
-            output_dir += '/eval_pretrain_template/testing' if template else '/eval_pretrain_smpl/testing'
+            output_dir += '/eval_pretrain_smpl/testing'
         gt_image, _ = self.dataset.load_color_mask_images(pose_idx, view_idx)
         if gt_image is not None:
             gt_image = cv.resize(gt_image, (0, 0), fx = img_factor, fy = img_factor)
@@ -690,7 +702,7 @@ class AvatarTrainer:
             visualize_util.save_ply_w_pts_w(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy(), gs_render["cano_pts_w"].cpu().numpy())
             visualize_util.save_ply_w_pts_w(output_dir + '/cano_pts/iter_filtered_%d.ply' % self.iter_idx, gs_render["cano_pts_filtered"].cpu().numpy(), gs_render["cano_pts_w_filtered"].cpu().numpy())
             save_mesh_as_ply(output_dir + '/cano_pts/iter_inverse_filtered_%d.ply' % self.iter_idx, gs_render["inverse_cano_pts_filtered"].cpu().numpy())
-            
+
             os.makedirs(output_dir + '/posed_pts', exist_ok = True)
             visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts"].cpu().numpy(), gs_render["posed_pts_w"].cpu().numpy())
             visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_filtered_%d.ply' % self.iter_idx, gs_render["posed_pts_filtered"].cpu().numpy(), gs_render["posed_pts_w_filtered"].cpu().numpy())
@@ -727,8 +739,6 @@ class AvatarTrainer:
         # os.makedirs(output_dir + '/uv_map', exist_ok=True)
         # cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
 
-        # template visualization
-        # os.makedirs(output_dir + '/template', exist_ok=True)
 
         # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
         # template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
