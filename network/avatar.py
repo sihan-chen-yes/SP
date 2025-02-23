@@ -600,6 +600,7 @@ class AvatarNet(nn.Module):
         posed_pts = posed_gaussian_vals["positions"]
         # inverse LBS
         inverse_cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
+        inverse_cano_pts = inverse_cano_gaussian_vals["positions"]
         inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
 
         # for debug use posed pts depth to filter
@@ -634,6 +635,7 @@ class AvatarNet(nn.Module):
             "cano_pts_filtered": cano_pts_filtered,
             "cano_pts_w": cano_pts_w,
             "cano_pts_w_filtered": cano_pts_w_filtered,
+            "inverse_cano_pts": inverse_cano_pts,
             "inverse_cano_pts_filtered": inverse_cano_pts_filtered,
             "posed_pts": posed_pts,
             "posed_pts_filtered": posed_pts_filtered,
