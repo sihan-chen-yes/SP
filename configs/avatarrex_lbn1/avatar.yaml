@@ -42,6 +42,7 @@ train:
     #TODO
     aiap_xyz: 1.0
     aiap_cov: 100.0
+    xy_nr_offset: 0.005
   finetune_color: false
   batch_size: 1
   num_workers: 8
