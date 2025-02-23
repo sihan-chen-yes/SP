@@ -279,13 +279,13 @@ class AvatarTrainer:
         #         'offset_loss': offset_loss.item()
         #     })
 
-        if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output:
+        if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output and self.iter_idx < 10000:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
             # regularization for smpl opacity
             opacity_loss = torch.abs((torch.clamp(predicted_mask, max=0.9) - smpl_opacity_map)[self.avatar_net.cano_smpl_mask]).mean()
             # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
-            lambda_opacity = self.loss_weight.get('opacity', 0.) if self.iter_idx < 10000 else 0.0
+            lambda_opacity = self.loss_weight.get('opacity', 0.)
             total_loss += lambda_opacity * opacity_loss
             batch_losses.update({
                 'opacity_loss': opacity_loss.item(),
@@ -323,7 +323,7 @@ class AvatarTrainer:
                 'skinning_weight_loss': skinning_weight_loss.item(),
             })
 
-        if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output:
+        if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output and self.iter_idx > 30000:
             inverse_cano_pts_filtered = render_output['inverse_cano_pts_filtered']
             inverse_cano_pts_loss = chamfer_loss(render_output["cano_pts"], inverse_cano_pts_filtered)
             # regularization for far away pts position
@@ -514,6 +514,7 @@ class AvatarTrainer:
                             writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
                             log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
                             smooth_losses[key] = 0.
+                        smooth_losses = {}
                         log_info += f'pts_num: {visibility_filter.shape[0]}, '
                         smooth_count = 0
                         print(log_info)
