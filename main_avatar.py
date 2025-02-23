@@ -322,6 +322,16 @@ class AvatarTrainer:
             batch_losses.update({
                 'skinning_weight_loss': skinning_weight_loss.item(),
             })
+
+        if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output:
+            inverse_cano_pts_filtered = render_output['inverse_cano_pts_filtered']
+            inverse_cano_pts_loss = chamfer_loss(render_output["cano_pts"], inverse_cano_pts_filtered)
+            # regularization for far away pts position
+            total_loss += self.loss_weight.get('inverse_cano_pts', 0.) * inverse_cano_pts_loss
+            batch_losses.update({
+                'inverse_cano_pts_loss': inverse_cano_pts_loss.item(),
+            })
+
         # forward_end.record()
 
         # backward_start.record()
