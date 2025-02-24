@@ -514,6 +514,7 @@ class AvatarTrainer:
                             writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
                             log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
                             smooth_losses[key] = 0.
+                        smooth_losses = {}
                         log_info += f'pts_num: {visibility_filter.shape[0]}, '
                         smooth_count = 0
                         print(log_info)
