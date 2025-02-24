@@ -341,9 +341,9 @@ class AvatarTrainer:
                     and 'predicted_depth_map' in render_output
                     and 'inverse_opacity_map' in render_output):
                 inverse_depth_map = render_output['inverse_depth_map']
-                predicted_mask = render_output['predicted_mask']
+                inverse_opacity_map = render_output['inverse_opacity_map']
                 predicted_depth_map = render_output['predicted_depth_map']
-                inverse_depth_map_loss = torch.abs((predicted_depth_map - inverse_depth_map)[predicted_mask >= 0.5]).mean()
+                inverse_depth_map_loss = torch.abs((predicted_depth_map - inverse_depth_map)[inverse_opacity_map >= 0.5]).mean()
                 # using inverse depth map to supervise
                 total_loss += self.loss_weight.get('inverse_depth_map', 0.) * inverse_depth_map_loss
                 batch_losses.update({
@@ -353,7 +353,7 @@ class AvatarTrainer:
             if self.loss_weight.get('inverse_opacity_map', 0.) and 'inverse_opacity_map' in render_output:
                 inverse_opacity_map = render_output['inverse_opacity_map']
                 predicted_mask = render_output['predicted_mask']
-                inverse_opacity_map_loss = torch.abs(predicted_mask - inverse_opacity_map).mean()
+                inverse_opacity_map_loss = torch.abs((predicted_mask - inverse_opacity_map)[inverse_opacity_map >= 0.5]).mean()
                 # using inverse opacity map to supervise
                 total_loss += self.loss_weight.get('inverse_opacity_map', 0.) * inverse_opacity_map_loss
                 batch_losses.update({
