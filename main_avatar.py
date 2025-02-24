@@ -296,7 +296,8 @@ class AvatarTrainer:
         if self.loss_weight.get('xy_nr_offset', 0.) and 'xy_nr_offset' in render_output:
             xy_nr_offset = render_output['xy_nr_offset']
             # regularization for xy_nr_offset
-            xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+            # xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+            xy_nr_offset_loss = torch.linalg.norm(xy_nr_offset, dim = -1).mean()
             total_loss += self.loss_weight.get('xy_nr_offset', 0.) * xy_nr_offset_loss
             batch_losses.update({
                 'xy_nr_offset_loss': xy_nr_offset_loss.item(),
