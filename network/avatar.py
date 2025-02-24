@@ -18,7 +18,7 @@ import trimesh
 from pytorch3d.ops import knn_points
 from utils.general_utils import inverse_sigmoid
 from utils.renderer.renderer_pytorch3d import Renderer
-from utils.graphics_utils import get_orthographic_camera, depth_to_position, depth_map_to_pos_map, position_to_depth
+from utils.graphics_utils import get_orthographic_camera, depth_to_position, depth_map_to_pos_map, position_to_depth, get_orthographic_depth_map
 import os
 from utils.obj_io import save_mesh_as_ply
 import root_finding
@@ -612,6 +612,10 @@ class AvatarNet(nn.Module):
         # pts_w_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
         posed_pts_filtered = posed_pts[filtering_mask]
         posed_pts_w_filtered = posed_pts_w[filtering_mask]
+
+        # use inverse_cano_pts_filtered to generate opacity for self-supervision
+        inverse_depth_map = get_orthographic_depth_map(inverse_cano_pts_filtered, self.map_size, self.map_size)
+        inverse_opacity_map = (inverse_depth_map > 0.).to(torch.float32) * 0.9
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -637,6 +641,10 @@ class AvatarNet(nn.Module):
             "cano_pts_w_filtered": cano_pts_w_filtered,
             "inverse_cano_pts": inverse_cano_pts,
             "inverse_cano_pts_filtered": inverse_cano_pts_filtered,
+
+            "inverse_depth_map": inverse_depth_map,
+            "inverse_opacity_map": inverse_opacity_map,
+
             "posed_pts": posed_pts,
             "posed_pts_filtered": posed_pts_filtered,
             "posed_pts_w": posed_pts_w,
