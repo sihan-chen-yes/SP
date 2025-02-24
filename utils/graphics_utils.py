@@ -147,7 +147,7 @@ def position_to_depth(camera, xyz):
     # for idx, depth in zip(linear_idx, depths):
     #     flat_depth_map[idx] = min(flat_depth_map[idx], depth)
 
-    flat_depth_map.scatter_reduce_(
+    flat_depth_map.scatter_reduce(
         dim=0,
         index=linear_idx,
         src=depths,
