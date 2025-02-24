@@ -147,7 +147,7 @@ def position_to_depth(camera, xyz):
     # for idx, depth in zip(linear_idx, depths):
     #     flat_depth_map[idx] = min(flat_depth_map[idx], depth)
 
-    flat_depth_map.scatter_reduce(
+    flat_depth_map.scatter_reduce_(
         dim=0,
         index=linear_idx,
         src=depths,
@@ -159,26 +159,7 @@ def position_to_depth(camera, xyz):
 
     return depth_map
 
-def get_orthographic_depth_map(xyz, height=1024, width=1024):
-    cano_v = xyz.cpu().detach().numpy()
-    cano_center = 0.5 * (cano_v.min(0) + cano_v.max(0))
-    cano_center = torch.from_numpy(cano_center).to('cuda')
-
-    front_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
-    front_mv[:3, 3] = -cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
-    front_mv[:3, :3] = torch.linalg.inv(front_mv[:3, :3])
-    front_mv[1:3, :] *= -1
-    front_camera = get_orthographic_camera(front_mv, height, width, cano_center.device)
-
-    back_mv = torch.eye(4, dtype=torch.float32).to(cano_center.device)
-    rot_y = cv.Rodrigues(np.array([0, np.pi, 0], np.float32))[0]
-    rot_y = torch.from_numpy(rot_y).to(cano_center.device)
-    back_mv[:3, :3] = rot_y
-    back_mv[:3, 3] = -rot_y @ cano_center + torch.tensor([0, 0, -10], dtype=torch.float32).to(cano_center.device)
-    back_mv[:3, :3] = torch.linalg.inv(back_mv[:3, :3])
-    back_mv[1:3] *= -1
-    back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
-
+def get_orthographic_depth_map(xyz, front_camera, back_camera):
     # position to depth
     xyz = xyz.unsqueeze(0)  # 3D points of shape (batch_size, num_points, 3)
 

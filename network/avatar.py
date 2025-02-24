@@ -614,8 +614,10 @@ class AvatarNet(nn.Module):
         posed_pts_w_filtered = posed_pts_w[filtering_mask]
 
         # use inverse_cano_pts_filtered to generate opacity for self-supervision
-        inverse_depth_map = get_orthographic_depth_map(inverse_cano_pts_filtered, self.map_size, self.map_size)
-        inverse_opacity_map = (inverse_depth_map > 0.).to(torch.float32) * 0.9
+        # TODO pts -> depth map is not differentiable
+        with torch.no_grad():
+            inverse_depth_map = get_orthographic_depth_map(inverse_cano_pts_filtered, self.front_camera, self.back_camera)
+            inverse_opacity_map = (inverse_depth_map > 0.).to(torch.float32) * 0.9
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,

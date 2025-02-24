@@ -51,7 +51,7 @@ def gen_depth_map(data_dir, height=1024, width=1024):
 
     # get orthographic projected depth map using pts in canonical space
     with torch.no_grad():
-        cano_smpl_depth_map = get_orthographic_depth_map(cano_init_points, height=height, width=width)
+        cano_smpl_depth_map = get_orthographic_depth_map(cano_init_points, front_camera, back_camera)
 
         # unproject depth back to position
         mask = cano_smpl_depth_map > 0
@@ -73,7 +73,7 @@ def gen_depth_map(data_dir, height=1024, width=1024):
 
         # get orthographic projected depth map using pts in canonical space
         with torch.no_grad():
-            cano_template_depth_map = get_orthographic_depth_map(cano_template_init_points)
+            cano_template_depth_map = get_orthographic_depth_map(cano_template_init_points, front_camera, back_camera)
 
             # unproject depth back to position
             mask = cano_template_depth_map > 0
