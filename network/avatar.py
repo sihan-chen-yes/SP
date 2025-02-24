@@ -184,7 +184,7 @@ class AvatarNet(nn.Module):
         opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
         scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
         rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
-
+        xy_nr_offset = 0.05 * xy_nr_offset
         # opacity_map
         opacity_map = opacity.clone().reshape(height, width)
         if return_map:
