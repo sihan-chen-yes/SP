@@ -238,6 +238,7 @@ class AvatarTrainer:
         # cv.imshow('image', image.detach().permute(1, 2, 0).cpu().numpy())
         # cv.imshow('gt_image', gt_image.permute(1, 2, 0).cpu().numpy())
         # cv.waitKey(0)
+        l1_loss = torch.nn.L1Loss()
 
         if self.loss_weight.get('l1', 0.) and 'rgb_map' in render_output:
             l1_loss = torch.abs(image - gt_image).mean()
@@ -323,14 +324,41 @@ class AvatarTrainer:
                 'skinning_weight_loss': skinning_weight_loss.item(),
             })
 
-        if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output and self.iter_idx > 30000:
-            inverse_cano_pts_filtered = render_output['inverse_cano_pts_filtered']
-            inverse_cano_pts_loss = chamfer_loss(render_output["cano_pts"], inverse_cano_pts_filtered)
-            # regularization for far away pts position
-            total_loss += self.loss_weight.get('inverse_cano_pts', 0.) * inverse_cano_pts_loss
-            batch_losses.update({
-                'inverse_cano_pts_loss': inverse_cano_pts_loss.item(),
-            })
+        # start self-supervision
+        if self.iter_idx >= 30000:
+            # if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output and self.iter_idx > 30000:
+            #     inverse_cano_pts_filtered = render_output['inverse_cano_pts_filtered']
+            #     inverse_cano_pts_loss = chamfer_loss(render_output["cano_pts"], inverse_cano_pts_filtered)
+            #     # regularization for far away pts position
+            #     total_loss += self.loss_weight.get('inverse_cano_pts', 0.) * inverse_cano_pts_loss
+            #     batch_losses.update({
+            #         'inverse_cano_pts_loss': inverse_cano_pts_loss.item(),
+            #     })
+
+            if (self.loss_weight.get('inverse_depth_map', 0.)
+                    and 'inverse_depth_map' in render_output
+                    and 'predicted_mask' in render_output
+                    and 'predicted_depth_map' in render_output
+                    and 'inverse_opacity_map' in render_output):
+                inverse_depth_map = render_output['inverse_depth_map']
+                predicted_mask = render_output['predicted_mask']
+                predicted_depth_map = render_output['predicted_depth_map']
+                inverse_depth_map_loss = torch.abs((predicted_depth_map - inverse_depth_map)[predicted_mask >= 0.5]).mean()
+                # using inverse depth map to supervise
+                total_loss += self.loss_weight.get('inverse_depth_map', 0.) * inverse_depth_map_loss
+                batch_losses.update({
+                    'inverse_depth_map_loss': inverse_depth_map_loss.item(),
+                })
+
+            if self.loss_weight.get('inverse_opacity_map', 0.) and 'inverse_opacity_map' in render_output:
+                inverse_opacity_map = render_output['inverse_opacity_map']
+                predicted_mask = render_output['predicted_mask']
+                inverse_opacity_map_loss = torch.abs(predicted_mask - inverse_opacity_map).mean()
+                # using inverse opacity map to supervise
+                total_loss += self.loss_weight.get('inverse_opacity_map', 0.) * inverse_opacity_map_loss
+                batch_losses.update({
+                    'inverse_opacity_map_loss': inverse_opacity_map_loss.item(),
+                })
 
         # forward_end.record()
 
@@ -651,12 +679,15 @@ class AvatarTrainer:
         cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.exr' % self.iter_idx, predicted_mask_map)
         cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.exr' % self.iter_idx, predicted_depth_map)
 
-        # export pos map
-        pos_map = gs_render["pos_map"].cpu().numpy()
-        # normalize to [0,1]
-        pos_map = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
-        os.makedirs(output_dir + '/pos_map', exist_ok=True)
-        cv.imwrite(output_dir + '/pos_map/iter_%d.exr' % self.iter_idx, pos_map)
+        os.makedirs(output_dir + '/inverse', exist_ok=True)
+        cv.imwrite(output_dir + '/inverse/inverse_opacity_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_opacity_map"].cpu().numpy())
+        cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_depth_map"].cpu().numpy())
+        # # export pos map
+        # pos_map = gs_render["pos_map"].cpu().numpy()
+        # # normalize to [0,1]
+        # pos_map = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
+        # os.makedirs(output_dir + '/pos_map', exist_ok=True)
+        # cv.imwrite(output_dir + '/pos_map/iter_%d.exr' % self.iter_idx, pos_map)
 
         # uv = self.avatar_net.cano_gaussian_model.get_uv
         # pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
@@ -672,7 +703,7 @@ class AvatarTrainer:
         # cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
 
         # template visualization
-        os.makedirs(output_dir + '/template', exist_ok=True)
+        # os.makedirs(output_dir + '/template', exist_ok=True)
 
         # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
         # template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
