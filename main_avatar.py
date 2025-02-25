@@ -777,8 +777,11 @@ class AvatarTrainer:
             dataset_name = 'training'
             seq_name = ''
 
+            self.opt['test']['n_pca'] = -1  # cancel PCA for training pose reconstruction
+
         self.dataset = testing_dataset
-        iter_idx = self.load_ckpt(self.opt['test']['prev_ckpt'], False)[1]
+        prev_ckpt = './results/{}/{}/batch_{}'.format(training_dataset.subject_name, self.opt["test"]["exp"], self.opt['test']['test_iters'])
+        iter_idx = self.load_ckpt(prev_ckpt, False)[1]
 
         output_dir = self.opt['test'].get('output_dir', None)
         if output_dir is None:
@@ -787,7 +790,8 @@ class AvatarTrainer:
                 view_folder = 'cam_%03d' % config.opt['test']['render_view_idx']
             else:
                 view_folder = view_setting + '_view'
-            exp_name = os.path.basename(os.path.dirname(self.opt['test']['prev_ckpt']))
+            # exp_name = os.path.basename(os.path.dirname(self.opt['test']['prev_ckpt']))
+            exp_name = self.opt['test']['exp']
             output_dir = f'./test_results/{training_dataset.subject_name}/{exp_name}/{dataset_name}_{seq_name}_{view_folder}' + '/batch_%06d' % iter_idx
 
         use_pca = self.opt['test'].get('n_pca', -1) >= 1
@@ -797,7 +801,6 @@ class AvatarTrainer:
             output_dir += '/vanilla'
         print('# Output dir: \033[1;31m%s\033[0m' % output_dir)
 
-        os.makedirs(output_dir + '/live_skeleton', exist_ok = True)
         os.makedirs(output_dir + '/rgb_map', exist_ok = True)
         os.makedirs(output_dir + '/mask_map', exist_ok = True)
 
@@ -932,6 +935,7 @@ class AvatarTrainer:
                 time_start.record()
 
             if self.opt['test'].get('render_skeleton', False):
+                os.makedirs(output_dir + '/live_skeleton', exist_ok=True)
                 from utils.visualize_skeletons import construct_skeletons
                 skel_vertices, skel_faces = construct_skeletons(item['joints'].cpu().numpy(), item['kin_parent'].cpu().numpy())
                 skel_mesh = trimesh.Trimesh(skel_vertices, skel_faces, process = False)
@@ -941,7 +945,7 @@ class AvatarTrainer:
                 extr, intr = item['extr'], item['intr']
                 geo_renderer.set_camera(extr, intr)
                 geo_renderer.set_model(skel_vertices[skel_faces.reshape(-1)], skel_mesh.vertex_normals.astype(np.float32)[skel_faces.reshape(-1)])
-                skel_img = geo_renderer.render()[:, :, :3]
+                skel_img = geo_renderer.render()[0][:, :, :3]
                 skel_img = (skel_img * 255).astype(np.uint8)
                 cv.imwrite(output_dir + '/live_skeleton/%08d.jpg' % item['data_idx'], skel_img)
 
@@ -1069,18 +1073,18 @@ if __name__ == '__main__':
     if args.mode is not None:
         config.opt['mode'] = args.mode
 
-    # set training results directory
-    config.opt['train']['net_ckpt_dir'] = args.dir
-    timestamp = datetime.datetime.now()
-    log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
-    writer = SummaryWriter(log_dir)
-
-    print(yaml.safe_dump(config.opt, sort_keys=False))
-    with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
-        fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
-
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
+        # set training results directory
+        config.opt['train']['net_ckpt_dir'] = args.dir
+        timestamp = datetime.datetime.now()
+        log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
+        writer = SummaryWriter(log_dir)
+
+        print(yaml.safe_dump(config.opt, sort_keys=False))
+        with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
+            fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
+
         if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_smpl') \
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
@@ -1088,6 +1092,7 @@ if __name__ == '__main__':
             trainer.pretrain(timestamp=timestamp)
         trainer.train(timestamp=timestamp)
     elif config.opt['mode'] == 'test':
+        config.opt['test']['exp'] = args.dir
         trainer.test()
     else:
         raise NotImplementedError('Invalid running mode!')
