@@ -55,24 +55,24 @@ test:
     frame_range: *id001
     subject_name: avatarrex_lbn1
   pose_data:
-#    data_path: Z:/Data/Pose/thuman4/pose_00.npz
+#    data_path: ../Pose/thuman4/pose_00.npz
 #    frame_range: [2000, 2500]
-#    data_path: Z:/Data/Pose/AMASS/CMU/06/06_13_poses.npz
-    data_path: Z:/Data/Pose/AMASS/CMU/10/10_05_poses.npz
+#    data_path: ../Pose/AMASS/CMU/06/06_13_poses.npz
+    data_path: ../Pose/AMASS/CMU/10/10_05_poses.npz
     frame_interval: 4
   view_setting: moving
   render_view_idx: 18
   global_orient: true
   img_scale: 1.0
-  save_mesh: false
-  render_skeleton: false
-  save_tex_map: false
-  save_ply: false
-  fix_hand: true
+  save_mesh: true
+  render_skeleton: true
+  save_tex_map: true
+  save_ply: true
+  fix_hand: false
   fix_hand_id: 55
   n_pca: 20
   sigma_pca: 2.0
-  prev_ckpt: ./results/avatarrex_lbn1/avatar/batch_800000
+  prev_ckpt: ./results/avatarrex_lbn1/avatar/batch_45000
 model:
   with_viewdirs: true
   random_style: false

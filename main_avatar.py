@@ -671,6 +671,8 @@ class AvatarTrainer:
             dataset_name = 'training'
             seq_name = ''
 
+            self.opt['test']['n_pca'] = -1  # cancel PCA for training pose reconstruction
+
         self.dataset = testing_dataset
         iter_idx = self.load_ckpt(self.opt['test']['prev_ckpt'], False)[1]
 
@@ -835,7 +837,7 @@ class AvatarTrainer:
                 extr, intr = item['extr'], item['intr']
                 geo_renderer.set_camera(extr, intr)
                 geo_renderer.set_model(skel_vertices[skel_faces.reshape(-1)], skel_mesh.vertex_normals.astype(np.float32)[skel_faces.reshape(-1)])
-                skel_img = geo_renderer.render()[:, :, :3]
+                skel_img = geo_renderer.render()[0][:, :, :3]
                 skel_img = (skel_img * 255).astype(np.uint8)
                 cv.imwrite(output_dir + '/live_skeleton/%08d.jpg' % item['data_idx'], skel_img)
 
