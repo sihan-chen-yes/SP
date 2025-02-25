@@ -197,3 +197,40 @@ def bound_loss(values, lower_bound=1e-4, upper_bound=5e-2):
     #            upper_part_mask.view(1024, 2048, 3).float().cpu().numpy())
     return loss.mean()
 
+def depth_map_smooth_loss(depth_map, mask, alpha=10):
+    """
+    edge-aware Laplacian(second order) smoothness loss
+    depth_map: (H, W, 1)
+    """
+
+    grad_x = torch.abs(mask[:, 1:] - mask[:, :-1])  # shape: (H, W-1)
+    grad_y = torch.abs(mask[1:, :] - mask[:-1, :])  # shape: (H-1, W)
+
+    grad_x_crop = grad_x[1:, :]  # (H-1, W-1)
+    grad_y_crop = grad_y[:, 1:]  # (H-1, W-1)
+
+    # grad = torch.sqrt(torch.square(grad_x_crop) + torch.square(grad_y_crop))
+    grad = torch.sqrt(torch.clamp(torch.square(grad_x_crop) + torch.square(grad_y_crop), min=1e-6))
+
+    # grad_disp = (grad.detach().cpu().numpy() * 255).astype(np.uint8)
+    # cv.imshow("Grad Map", grad_disp)
+    # cv.waitKey(0)
+    # cv.destroyAllWindows()
+
+    weight = torch.exp(-alpha * grad) # (H-1, W-1)
+    # weight = torch.exp(-alpha * grad) * mask[:-1, :-1] # (H-1, W-1)
+    weight_crop = weight[1:, 1:]
+
+    # Laplacian computation (second order gradient)
+    lap_x = depth_map[:, :-2] - 2 * depth_map[:, 1:-1] + depth_map[:, 2:] # (H, W-2)
+    lap_y = depth_map[:-2, :] - 2 * depth_map[1:-1, :] + depth_map[2:, :] # (H-2, W)
+
+    lap_x_crop = lap_x[1:-1, :]  # (H-2, W-2)
+    lap_y_crop = lap_y[:, 1:-1]  # (H-2, W-2)
+    #TODO
+    loss_x = (weight_crop * torch.abs(lap_x_crop)).mean()
+    loss_y = (weight_crop * torch.abs(lap_y_crop)).mean()
+
+    return loss_x + loss_y
+
+
