@@ -402,9 +402,9 @@ class AvatarNet(nn.Module):
 
     def get_pose_map(self, items):
         pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats_woRoot'])
-        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_init_points) + pt_mats[..., :3, 3]
+        live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
         live_pos_map = torch.zeros_like(self.cano_smpl_map)
-        live_pos_map[self.cano_smpl_mask] = live_pts
+        live_pos_map[self.cano_smpl_mask[self.bounding_mask].view(self.map_size, self.map_size * 2)] = live_pts
         live_pos_map = F.interpolate(live_pos_map.permute(2, 0, 1)[None], None, [0.5, 0.5], mode = 'nearest')[0]
         live_pos_map = torch.cat(torch.split(live_pos_map, [self.map_size // 2, self.map_size // 2], 2), 0)
         items.update({
@@ -668,12 +668,11 @@ class AvatarNet(nn.Module):
             "posed_gaussian_vals": posed_gaussian_vals,
             "filtering_mask": filtering_mask,
         }
-
-        # if not self.training:
-        #     ret.update({
-        #         'cano_tex_map': color_map,
-        #         'posed_gaussians': gaussian_vals
-        #     })
+        if not self.training:
+            ret.update({
+                'cano_tex_map': color_map,
+                'posed_gaussians': gaussian_vals
+            })
 
         return ret
 
