@@ -482,7 +482,7 @@ class AvatarNet(nn.Module):
             colors, color_map = self.get_colors(pose_map, self.cano_smpl_mask, front_viewdirs, back_viewdirs)
             skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
             # cano_pts has been filtered already
-            filtering_mask = torch.ones_like(cano_pts, dtype=torch.bool).flatten()
+            filtering_mask = torch.ones((cano_pts.shape[0]), dtype=torch.bool)
         else:
 
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
