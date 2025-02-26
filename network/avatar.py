@@ -186,7 +186,7 @@ class AvatarNet(nn.Module):
             pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
         else:
             pts_w = cano_gaussian_vals["skinning_weight"]
-
+        cano_gaussian_vals["skinning_weight"] = pts_w
         # pick the corresponding transformation for each pts
         pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
         posed_gaussian_vals = cano_gaussian_vals.copy()
@@ -197,7 +197,7 @@ class AvatarNet(nn.Module):
 
         return posed_gaussian_vals
 
-    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False, return_pts_w=False):
+    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False):
         # smplx inverse transformation
         # live 2 cano space: inverse LBS
         # TODO
@@ -218,6 +218,7 @@ class AvatarNet(nn.Module):
 
         cano_gaussian_vals = posed_gaussian_vals.copy()
         cano_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], posed_gaussian_vals['positions']) + pt_mats[..., :3, 3]
+        posed_gaussian_vals["skinning_weight"] = pts_w
 
         if use_root_finding:
             argmax_lbs = torch.argmax(pts_w, -1)
@@ -251,7 +252,7 @@ class AvatarNet(nn.Module):
         rot_mats = torch.einsum('nxy,nyz->nxz', pt_mats[..., :3, :3], rot_mats)
         cano_gaussian_vals['rotations'] = pytorch3d.transforms.matrix_to_quaternion(rot_mats)
 
-        return cano_gaussian_vals, pts_w
+        return cano_gaussian_vals
 
     def get_others(self, pose_map, mask, return_map = False):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
@@ -476,6 +477,7 @@ class AvatarNet(nn.Module):
 
         # use depth map predicted from 2D pose map
         predicted_depth_map = self.get_predicted_depth_map(pose_map)
+        # TODO merge
         if pretrain:
             opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.cano_smpl_mask, return_map=True)
             cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.cano_smpl_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
@@ -493,8 +495,7 @@ class AvatarNet(nn.Module):
             filtering_mask = (opacity_map >= 0.5).flatten()
             # atol = 0.01
             # filtering_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
-        cano_pts_w = skinning_weight
-        cano_pts_w_filtered = cano_pts_w[filtering_mask]
+
         cano_pts_filtered = cano_pts[filtering_mask]
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
@@ -542,6 +543,8 @@ class AvatarNet(nn.Module):
         nonrigid_offset = 0
 
         posed_gaussian_vals = self.transform_cano2live(gaussian_vals, items)
+        cano_pts_w = gaussian_vals["skinning_weight"]
+        cano_pts_w_filtered = cano_pts_w[filtering_mask]
 
         render_ret = render3(
             posed_gaussian_vals,
@@ -599,7 +602,7 @@ class AvatarNet(nn.Module):
         # template_depth_map = template_render_ret['depth'].permute(1, 2, 0)
         posed_pts = posed_gaussian_vals["positions"]
         # inverse LBS
-        inverse_cano_gaussian_vals, posed_pts_w = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, return_pts_w=True)
+        inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True)
         inverse_cano_pts = inverse_cano_gaussian_vals["positions"]
         inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
 
@@ -611,6 +614,7 @@ class AvatarNet(nn.Module):
         # atol = 0.01
         # pts_w_mask = torch.abs(predicted_depth_map.flatten() - 10.0) < atol
         posed_pts_filtered = posed_pts[filtering_mask]
+        posed_pts_w = posed_gaussian_vals["skinning_weight"]
         posed_pts_w_filtered = posed_pts_w[filtering_mask]
 
         # use inverse_cano_pts_filtered to generate opacity for self-supervision
