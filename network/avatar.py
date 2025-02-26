@@ -41,7 +41,7 @@ class AvatarNet(nn.Module):
 
         # read preprocessed depth map: 1.mesh based 2.pts based
         # for 1. smplx  2. template
-        cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}/cano_smpl_depth_map_pts_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
+        cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}/cano_smpl_depth_map_mesh_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
         self.cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(config.device)
         # cano_template_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_template_{}/cano_smpl_depth_map_pts_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
         # self.cano_template_depth_map = torch.from_numpy(cano_template_depth_map).to(torch.float32).to(config.device)
