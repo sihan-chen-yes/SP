@@ -9,6 +9,9 @@ device = torch.device('cuda:0')
 cano_smpl_pose = np.zeros(75, dtype = np.float32)
 cano_smpl_pose[3+3*1+2] = math.radians(25)
 cano_smpl_pose[3+3*2+2] = math.radians(-25)
+# rotate wrist with 90 degrees along x axis
+cano_smpl_pose[3+3*20] = math.radians(-90)
+cano_smpl_pose[3+3*21] = math.radians(-90)
 cano_smpl_pose = torch.from_numpy(cano_smpl_pose)
 cano_smpl_transl = cano_smpl_pose[:3]
 cano_smpl_global_orient = cano_smpl_pose[3:6]
