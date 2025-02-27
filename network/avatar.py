@@ -40,16 +40,12 @@ class AvatarNet(nn.Module):
         self.with_viewdirs = opt.get('with_viewdirs', True)
 
         # read preprocessed depth map: 1.mesh based 2.pts based
-        # for 1. smplx  2. template
-        cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}/cano_smpl_depth_map_pts_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
+        # use mesh based depth map
+        cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}/cano_smpl_depth_map_mesh_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
         self.cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(config.device)
-        # cano_template_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_template_{}/cano_smpl_depth_map_pts_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
-        # self.cano_template_depth_map = torch.from_numpy(cano_template_depth_map).to(torch.float32).to(config.device)
         self.cano_smpl_mask = self.cano_smpl_depth_map > 0.
-        # self.cano_template_mask = self.cano_template_depth_map > 0.
         # change background value to 10 by default
         self.cano_smpl_depth_map[~self.cano_smpl_mask] = 10.0
-        # self.cano_template_depth_map[~self.cano_template_mask] = 10.0
         self.cano_smpl_opacity_map = self.cano_smpl_mask.to(torch.float32) * 0.9
         # depth offset normalized
         self.cano_smpl_depth_offset_map = self.cano_smpl_depth_map.clone()
@@ -62,29 +58,21 @@ class AvatarNet(nn.Module):
         self.cano_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
         cano_smpl_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/cano_smpl_pos_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
         self.cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
-        # self.cano_smpl_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
+        # changeable target region
         self.bounding_mask = self.gen_bounding_mask()
 
         self.cano_init_points = self.cano_smpl_map[self.bounding_mask]
         self.lbs_init_points = self.cano_smpl_map[torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0]
-        self.pos_map_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
         self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), spatial_lr_scale = 2.5,
-                                                 mask = self.pos_map_mask[self.bounding_mask])
-
+                                                 mask = self.cano_smpl_mask[self.bounding_mask])
+        self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         # for skinning weight
         cano_pos_map_size = self.cano_smpl_map.shape[1] // 2
         self.cano_pos_map = torch.concatenate([self.cano_smpl_map[:, :cano_pos_map_size], self.cano_smpl_map[:, cano_pos_map_size:]], 2)
         self.cano_pos_map = self.cano_pos_map.permute((2, 0, 1))
 
-        # cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template_{}/cano_smpl_pos_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
-        # self.cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)
-        # self.cano_template_mask = torch.linalg.norm(self.cano_template_map, dim = -1) > 0.
-        # self.cano_template_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
-        # self.cano_template_init_points = self.cano_template_map[self.cano_template_mask]
-        # self.cano_template_gaussian_model.create_from_pcd(self.cano_template_init_points, torch.rand_like(self.cano_template_init_points), spatial_lr_scale = 2.5)
         self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/init_pts_lbs.npy'.format(self.map_size))).to(torch.float32).to(config.device)
 
-        self.cano_gaussian_model.training_setup(self.opt["gaussian"])
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 8, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.depth_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 1, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
@@ -100,8 +88,6 @@ class AvatarNet(nn.Module):
         # self.feature_style = torch.ones([1, self.feature_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.feature_net.style_dim)
         # position + rotation + scaling + opacity + color
         # self.mlp_decoder = VanillaCondMLP(opt["feat_dim"], 0, 3 + 4 + 3 + 1 + 3, opt["mlp"])
-
-        # self.template_points = trimesh.load(config.opt['train']['data']['data_dir'] + '/template_raw.ply', process = False)
 
 
         if self.with_viewdirs:
