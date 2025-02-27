@@ -146,14 +146,14 @@ class MvRgbDatasetBase(Dataset):
 
         data_item = dict()
         if self.load_smpl_pos_map:
-            smpl_pos_map = cv.imread(self.data_dir + "/smpl_pos_map_{}/{:08d}.exr".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
+            smpl_pos_map = cv.imread(self.data_dir + "/smpl_pos_map_{}_rot/{:08d}.exr".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
             pos_map_size = smpl_pos_map.shape[1] // 2
             smpl_pos_map = np.concatenate([smpl_pos_map[:, :pos_map_size], smpl_pos_map[:, pos_map_size:]], 2)
             smpl_pos_map = smpl_pos_map.transpose((2, 0, 1))
             data_item['smpl_pos_map'] = smpl_pos_map
 
         if self.load_smpl_nml_map:
-            smpl_nml_map = cv.imread(self.data_dir + "/smpl_nml_map_{}/{:08d}.jpg".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
+            smpl_nml_map = cv.imread(self.data_dir + "/smpl_nml_map_{}_rot/{:08d}.jpg".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
             smpl_nml_map = (smpl_nml_map / 255.).astype(np.float32)
             nml_map_size = smpl_nml_map.shape[1] // 2
             smpl_nml_map = np.concatenate([smpl_nml_map[:, :nml_map_size], smpl_nml_map[:, nml_map_size:]], 2)
@@ -291,11 +291,11 @@ class MvRgbDatasetBase(Dataset):
         from sklearn.decomposition import PCA
         from tqdm import tqdm
         import joblib
-        if not os.path.exists(self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components)):
+        if not os.path.exists(self.data_dir + "/smpl_pos_map_{}_rot/pca_{}.ckpt".format(self.map_size, n_components)):
             pose_conds = []
             mask = None
             for pose_idx in tqdm(self.pose_list, desc = 'Loading position maps...'):
-                pose_map = cv.imread(self.data_dir + '/smpl_pos_map/%08d.exr' % pose_idx, cv.IMREAD_UNCHANGED)
+                pose_map = cv.imread(self.data_dir + '/smpl_pos_map_{}_rot/%08d.exr' % pose_idx, cv.IMREAD_UNCHANGED)
                 pose_map = pose_map[:, :pose_map.shape[1] // 2]
                 if mask is None:
                     mask = np.linalg.norm(pose_map, axis = -1) > 1e-6
@@ -304,11 +304,11 @@ class MvRgbDatasetBase(Dataset):
             pose_conds = pose_conds.reshape(pose_conds.shape[0], -1)
             self.pca = PCA(n_components = n_components)
             self.pca.fit(pose_conds)
-            joblib.dump(self.pca, self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components))
+            joblib.dump(self.pca, self.data_dir + "/smpl_pos_map_{}_rot/pca_{}.ckpt".format(self.map_size, n_components))
             self.pos_map_mask = mask
         else:
-            self.pca = joblib.load(self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components))
-            pose_map = cv.imread(sorted(glob.glob(self.data_dir + '/smpl_pos_map/0*.exr'))[0], cv.IMREAD_UNCHANGED)
+            self.pca = joblib.load(self.data_dir + "/smpl_pos_map_{}_rot/pca_{}.ckpt".format(self.map_size, n_components))
+            pose_map = cv.imread(sorted(glob.glob(self.data_dir + '/smpl_pos_map_{}_rot/0*.exr'))[0], cv.IMREAD_UNCHANGED)
             pose_map = pose_map[:, :pose_map.shape[1] // 2]
             self.pos_map_mask = np.linalg.norm(pose_map, axis = -1) > 1e-6
 
