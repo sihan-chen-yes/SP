@@ -224,7 +224,7 @@ class AvatarNet(nn.Module):
         offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
         # map to [-1, 1] for depth
         # 0 for background
-        offset_map[:, :, 0] = torch.nn.functional.tanh(offset_map[:, :, 0])
+        offset_map = torch.nn.functional.tanh(offset_map)
         return offset_map
 
     def get_predicted_position_map(self, pose_map):
@@ -236,7 +236,7 @@ class AvatarNet(nn.Module):
         depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
                                                  + self.cano_smpl_depth_offset_map_min + 10)
         depth_map = depth_map.squeeze(-1)
-        xy_nr_offset_map = xy_nr_offset_map * 0.05
+        # xy_nr_offset_map = xy_nr_offset_map * 0.05
         return depth_map, xy_nr_offset_map
 
     # def get_interpolated_feat(self, pose_map):
