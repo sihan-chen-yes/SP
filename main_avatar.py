@@ -139,10 +139,12 @@ class AvatarTrainer:
         items = net_util.delete_batch_idx(items)
         pose_map = items['smpl_pos_map'][:3]
 
-        predicted_depth = self.avatar_net.get_predicted_depth_map(pose_map)
+        predicted_depth, xy_nr_offset_map = self.avatar_net.get_predicted_position_map(pose_map)
+        xy_nr_offset = xy_nr_offset_map.view(-1, 2)
         # use smplx 3d pts to supervise
         position = depth_map_to_pos_map(predicted_depth, self.avatar_net.bounding_mask, front_camera=self.avatar_net.front_camera, back_camera=self.avatar_net.back_camera)
-        opacity, scales, rotations, xy_nr_offset = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
+        position[:, :2] = position[:, :2] + xy_nr_offset
+        opacity, scales, rotations = self.avatar_net.get_others(pose_map, self.avatar_net.bounding_mask)
 
         target_region = self.avatar_net.cano_smpl_mask[self.avatar_net.bounding_mask]
         # position loss
