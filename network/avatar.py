@@ -49,17 +49,37 @@ class AvatarNet(nn.Module):
         self.cano_smpl_depth_offset_map_max = self.cano_smpl_depth_offset_map.max() * 1.1
         self.cano_smpl_depth_offset_map_min = self.cano_smpl_depth_offset_map.min() * 1.1
 
+        #TBN
+        self.bounding_mask = self.gen_bounding_mask()
+        cano_nml_map = cv.imread(
+            config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/cano_smpl_nml_map.exr'.format(self.map_size),
+            cv.IMREAD_UNCHANGED)
+        self.cano_nml_map = torch.from_numpy(cano_nml_map).to(torch.float32).to(config.device)
+        self.cano_nmls = self.cano_nml_map[self.bounding_mask]
+
+        cano_tan_map = cv.imread(
+            config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/cano_smpl_tan_map.exr'.format(self.map_size),
+            cv.IMREAD_UNCHANGED)
+        self.cano_tan_map = torch.from_numpy(cano_tan_map).to(torch.float32).to(config.device)
+        self.cano_tans = self.cano_tan_map[self.bounding_mask]
+
+        cano_btan_map = cv.imread(
+            config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/cano_smpl_btan_map.exr'.format(self.map_size),
+            cv.IMREAD_UNCHANGED)
+        self.cano_btan_map = torch.from_numpy(cano_btan_map).to(torch.float32).to(config.device)
+        self.cano_btans = self.cano_btan_map[self.bounding_mask]
+
+        self.TBN = torch.stack([self.cano_tans, self.cano_btans, self.cano_nmls], dim=-1)
         # init canonical gausssian model
         self.max_sh_degree = 0
         self.cano_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
         cano_smpl_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}/cano_smpl_pos_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
         self.cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
         # self.cano_smpl_mask = torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0.
-        self.bounding_mask = self.gen_bounding_mask()
 
         self.cano_init_points = self.cano_smpl_map[self.bounding_mask]
         self.lbs_init_points = self.cano_smpl_map[torch.linalg.norm(self.cano_smpl_map, dim = -1) > 0]
-        self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), spatial_lr_scale = 2.5,
+        self.cano_gaussian_model.create_from_pcd(self.cano_init_points, torch.rand_like(self.cano_init_points), self.TBN, spatial_lr_scale = 2.5,
                                                  mask = self.cano_smpl_mask[self.bounding_mask])
 
         # cano_template_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_template_{}/cano_smpl_pos_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)

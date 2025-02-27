@@ -12,7 +12,7 @@ from network.volume import CanoBlendWeightVolume
 import config
 from utils.renderer.renderer_pytorch3d import Renderer
 from utils.visualize_util import colormap
-from utils.graphics_utils import get_orthographic_depth_map, depth_map_to_pos_map, gen_front_back_cameras
+from utils.graphics_utils import get_orthographic_depth_map, depth_map_to_pos_map, gen_front_back_cameras, get_TBN
 from utils.obj_io import save_mesh_as_ply
 
 def save_pos_map(pos_map, path):
@@ -138,7 +138,16 @@ if __name__ == '__main__':
     cano_smpl_v = template.vertices.astype(np.float32)
     smpl_faces = template.faces.astype(np.int64)
     cano_smpl_v_dup = cano_smpl_v[smpl_faces.reshape(-1)]
-    cano_smpl_n_dup = template.vertex_normals.astype(np.float32)[smpl_faces.reshape(-1)]
+    # cano_smpl_n_dup = template.vertex_normals.astype(np.float32)[smpl_faces.reshape(-1)]
+
+    # read uv map and compute per-vertex tangent and bitangent
+    obj_data = get_TBN(data_dir + '/smplx_uv.obj', template)
+    per_vertex_tangents = obj_data["per_vertex_tangents"]
+    per_vertex_bitangents = obj_data["per_vertex_bitangents"]
+    per_vertex_normals = obj_data["per_vertex_normals"]
+    cano_smpl_t_dup = per_vertex_tangents.astype(np.float32)[smpl_faces.reshape(-1)]
+    cano_smpl_b_dup = per_vertex_bitangents.astype(np.float32)[smpl_faces.reshape(-1)]
+    cano_smpl_n_dup = per_vertex_normals.astype(np.float32)[smpl_faces.reshape(-1)]
 
     # define front & back view matrices
     front_mv = np.identity(4, np.float32)
@@ -181,6 +190,26 @@ if __name__ == '__main__':
     back_cano_nml_map = cano_renderer.render()[0][:, :, :3]
     cano_nml_map = np.concatenate([front_cano_nml_map, back_cano_nml_map], 1)
     cv.imwrite(data_dir + '/smpl_pos_map_{}/cano_smpl_nml_map.exr'.format(map_size), cano_nml_map)
+
+    # render canonical smpl tangent maps
+    cano_renderer.set_model(cano_smpl_v_dup, cano_smpl_t_dup)
+    cano_renderer.set_camera(front_mv)
+    front_cano_tan_map = cano_renderer.render()[0][:, :, :3]
+
+    cano_renderer.set_camera(back_mv)
+    back_cano_tan_map = cano_renderer.render()[0][:, :, :3]
+    cano_tan_map = np.concatenate([front_cano_tan_map, back_cano_tan_map], 1)
+    cv.imwrite(data_dir + '/smpl_pos_map_{}/cano_smpl_tan_map.exr'.format(map_size), cano_tan_map)
+
+    # render canonical smpl bitangent maps
+    cano_renderer.set_model(cano_smpl_v_dup, cano_smpl_b_dup)
+    cano_renderer.set_camera(front_mv)
+    front_cano_btan_map = cano_renderer.render()[0][:, :, :3]
+
+    cano_renderer.set_camera(back_mv)
+    back_cano_btan_map = cano_renderer.render()[0][:, :, :3]
+    cano_btan_map = np.concatenate([front_cano_btan_map, back_cano_btan_map], 1)
+    cv.imwrite(data_dir + '/smpl_pos_map_{}/cano_smpl_btan_map.exr'.format(map_size), cano_btan_map)
 
     body_mask = np.linalg.norm(cano_pos_map, axis = -1) > 0.
     cano_pts = cano_pos_map[body_mask]

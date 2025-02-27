@@ -20,6 +20,7 @@ from utils.sh_utils import RGB2SH
 # from simple_knn._C import distCUDA2
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from utils.graphics_utils import index_to_uv
+from pytorch3d.transforms import matrix_to_quaternion
 
 class OptimizationParams:
     def __init__(self):
@@ -173,7 +174,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, points, colors, spatial_lr_scale: float, mask):
+    def create_from_pcd(self, points, colors, rot_matrix, spatial_lr_scale: float, mask):
         self.spatial_lr_scale = spatial_lr_scale
         if not isinstance(points, torch.Tensor):
             points = torch.tensor(np.asarray(points))
@@ -201,6 +202,8 @@ class GaussianModel:
         scales = torch.clamp(scales, min=torch.log(torch.tensor(1e-4).cuda()))
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
+        # use TBN to init gs on smplx
+        rots[mask] = nn.functional.normalize(matrix_to_quaternion(rot_matrix))[mask]
 
         # opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         opacities = inverse_sigmoid(0.9 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))

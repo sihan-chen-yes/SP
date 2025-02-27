@@ -240,3 +240,190 @@ def gen_front_back_cameras(xyz, height=1024, width=1024):
     back_mv[1:3] *= -1
     back_camera = get_orthographic_camera(back_mv, height, width, cano_center.device)
     return front_camera, back_camera
+
+def read_obj(obj_path):
+    """
+    Parameters
+    ----------
+    obj_path
+
+    Returns
+    -------
+    vertices_v
+    vertices_vt
+    faces: contains both xyz vertices index and uv vertices index
+    vertex_neighbors: adjacent face index
+
+    """
+    # careful these xyz positions are not canonical pose xyz positions!
+    vertices_v = []
+    vertices_vt = []
+    faces = []
+    vertex_neighbors = []
+
+    with open(obj_path, 'r') as obj_file:
+        for line in obj_file:
+            if line.startswith('v '):
+                _, x, y, z = line.strip().split()
+                vertices_v.append([float(x), float(y), float(z)])
+            elif line.startswith('vt '):
+                _, u, v = line.strip().split()
+                vertices_vt.append([float(u), float(v)])
+            elif line.startswith('f '):
+                face_elements = line.strip().split()[1:]
+                indices_v = []
+                indices_vt = []
+                for element in face_elements:
+                    parts = element.split('/')
+                    indices_v.append(int(parts[0]) - 1)
+                    if len(parts) > 1 and parts[1]:
+                        indices_vt.append(int(parts[1]) - 1)
+                faces.append({'indices_v': indices_v, 'indices_vt': indices_vt})
+    for i in range(len(vertices_v)):
+        face_neighbor = []
+        # iterate all faces
+        for j, item in enumerate(faces):
+            # contained in xyz face
+            if i in item['indices_v']:
+                face_neighbor.append(j)
+        vertex_neighbors.append(face_neighbor)
+
+    return {
+        "vertices_v": vertices_v,
+        "vertices_vt": vertices_vt,
+        "faces": faces,
+        "vertex_neighbors": vertex_neighbors,
+    }
+
+def get_TBN(obj_path, smplx=None):
+    """
+    get per face TBN and per vertex TBN
+    Returns
+    -------
+
+    """
+    # read data from obj file
+    obj_data = read_obj(obj_path)
+
+    # use default vertices_v from obj file
+    if smplx is None:
+        vertices_v = obj_data["vertices_v"]
+        # normals = None
+    else:
+        vertices_v = smplx.vertices.astype(np.float32)
+        # normals = smplx.face_normals.astype(np.float32)
+
+    vertices_vt = obj_data["vertices_vt"]
+    faces = obj_data['faces']
+    vertex_neighbors = obj_data['vertex_neighbors']
+    per_face_tangents, per_face_bitangents, per_face_normals = compute_per_face_TBN(vertices_v, vertices_vt, faces)
+    per_vertex_tangents, per_vertex_bitangents, per_vertex_normals = compute_per_vertex_TBN(vertex_neighbors, per_face_tangents, per_face_bitangents, per_face_normals)
+    obj_data.update({
+        "per_face_tangents": per_face_tangents,
+        "per_face_bitangents": per_face_bitangents,
+        "per_face_normals": per_face_normals,
+        "per_vertex_tangents": per_vertex_tangents,
+        "per_vertex_bitangents": per_vertex_bitangents,
+        "per_vertex_normals": per_vertex_normals,
+    })
+    return obj_data
+
+def compute_per_face_TBN(vertices_v, vertices_vt, faces):
+    tangent_list = []
+    bitangent_list = []
+    normal_list = []
+    epsilon = 1e-8
+
+    # iterate faces
+    for face_index, face in enumerate(faces):
+        indices_v = face['indices_v']
+        indices_vt = face['indices_vt']
+
+        # v and vt coords
+        v0, v1, v2 = [vertices_v[i] for i in indices_v]
+        uv0, uv1, uv2 = [vertices_vt[i] for i in indices_vt]
+
+        delta_pos1 = np.array(v1) - np.array(v0)
+        delta_pos2 = np.array(v2) - np.array(v0)
+        delta_uv1 = np.array(uv1) - np.array(uv0)
+        delta_uv2 = np.array(uv2) - np.array(uv0)
+
+        normal = np.cross(delta_pos1, delta_pos2)
+        # normalize
+        normal /= np.linalg.norm(normal) + epsilon
+
+        normal = np.cross(delta_pos1, delta_pos2)
+        # normalize
+        normal /= np.linalg.norm(normal) + epsilon
+
+        denominator = delta_uv1[0] * delta_uv2[1] - delta_uv1[1] * delta_uv2[0]
+        if abs(denominator) < epsilon:
+            if abs(denominator) < epsilon:
+                # print("Warning: UV determinant is zero, using fallback tangent.")
+                # pick longer edge as tangent
+                if np.linalg.norm(delta_pos1) > np.linalg.norm(delta_pos2):
+                    tangent = delta_pos1
+                else:
+                    tangent = delta_pos2
+        else:
+            r = 1.0 / denominator
+            tangent = r * (delta_pos1 * delta_uv2[1] - delta_pos2 * delta_uv1[1])
+
+        # Gram-Schmidt orthogonalization
+        tangent = tangent - np.dot(normal, tangent) * normal
+        tangent = tangent / np.linalg.norm(tangent)
+
+        # bitangent = r * (delta_pos2 * delta_uv1[0] - delta_pos1 * delta_uv2[0])
+
+        bitangent = np.cross(normal, tangent)
+
+        tangent_list.append(tangent.tolist())
+        bitangent_list.append(bitangent.tolist())
+        normal_list.append(normal.tolist())
+
+    # change list into numpy
+    return np.array(tangent_list), np.array(bitangent_list), np.array(normal_list)
+
+def compute_per_vertex_TBN(vertex_neighbors, per_face_tangents, per_face_bitangents, per_face_normals):
+    """
+    Parameters
+    ----------
+    vertex_neighbors: adjacent face index for each vertex
+
+    per_face_tangents
+    per_face_bitangents
+    per_face_normals
+    Returns
+    -------
+    per_vertex_tangents
+    per_vertex_bitangents
+    per_vertex_normals
+    """
+    num_vertices = len(vertex_neighbors)
+    per_vertex_tangents = np.zeros((num_vertices, 3))
+    per_vertex_bitangents = np.zeros((num_vertices, 3))
+    per_vertex_normals = np.zeros((num_vertices, 3))
+
+    epsilon = 1e-8
+
+    for indices_v, neighbors in enumerate(vertex_neighbors):
+        tangent_sum = np.zeros(3)
+        bitangent_sum = np.zeros(3)
+        normal_sum = np.zeros(3)
+
+        for neighbor in neighbors:
+            #TODO better avg methods
+            tangent_sum += per_face_tangents[neighbor]
+            bitangent_sum += per_face_bitangents[neighbor]
+            normal_sum += per_face_normals[neighbor]
+
+        tangent_sum /= len(neighbors)
+        bitangent_sum /= len(neighbors)
+        normal_sum /= len(neighbors)
+
+        # Normalizing TBN vectors
+        per_vertex_tangents[indices_v] = tangent_sum / (np.linalg.norm(tangent_sum) + epsilon)
+        per_vertex_bitangents[indices_v] = bitangent_sum / (np.linalg.norm(bitangent_sum) + epsilon)
+        per_vertex_normals[indices_v] = normal_sum / (np.linalg.norm(normal_sum) + epsilon)
+
+    return per_vertex_tangents, per_vertex_bitangents, per_vertex_normals
