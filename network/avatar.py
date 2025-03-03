@@ -403,7 +403,7 @@ class AvatarNet(nn.Module):
         live_pos_map = torch.zeros_like(self.cano_smpl_map)
         live_pos_map[self.cano_smpl_mask] = live_pts
         live_pos_map = F.interpolate(live_pos_map.permute(2, 0, 1)[None], None, [0.5, 0.5], mode = 'nearest')[0]
-        live_pos_map = torch.cat(torch.split(live_pos_map, [self.map_size // 2, 512], 2), 0)
+        live_pos_map = torch.cat(torch.split(live_pos_map, [self.map_size // 2, self.map_size // 2], 2), 0)
         items.update({
             'smpl_pos_map': live_pos_map
         })
