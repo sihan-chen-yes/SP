@@ -239,12 +239,18 @@ def depth_map_smooth_loss(depth_map, mask, alpha=10):
 
     return loss.mean()
 
-def full_aiap_loss(gs_can, gs_obs, n_neighbors=5):
+def full_aiap_loss(gs_can, gs_obs, n_neighbors=5, mask=None):
     xyz_can = gs_can["positions"]
     xyz_obs = gs_obs["positions"]
 
     cov_can = gs_can["covariance"]
     cov_obs = gs_obs["covariance"]
+
+    if mask is not None:
+        xyz_can = xyz_can[mask]
+        xyz_obs = xyz_obs[mask]
+        cov_can = cov_can[mask]
+        cov_obs = cov_obs[mask]
 
     _, nn_ix, _ = knn_points(xyz_can.unsqueeze(0),
                              xyz_can.unsqueeze(0),

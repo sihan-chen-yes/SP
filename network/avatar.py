@@ -659,6 +659,7 @@ class AvatarNet(nn.Module):
 
             "gaussian_vals": gaussian_vals,
             "posed_gaussian_vals": posed_gaussian_vals,
+            "filtering_mask": filtering_mask,
         }
 
         # if not self.training:
