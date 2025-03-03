@@ -39,6 +39,9 @@ train:
     inverse_depth_map: 0.1
     inverse_opacity_map: 0.1
     depth_smooth: 0.1
+    #TODO
+    aiap_xyz: 1.0
+    aiap_cov: 100.0
   finetune_color: false
   batch_size: 1
   num_workers: 8
@@ -80,7 +83,7 @@ test:
 model:
   with_viewdirs: true
   random_style: false
-  lbs_weights: NN
+  lbs_weights: lbs_weights
   lbs_weight_interpolation: linear
 
   mlp:

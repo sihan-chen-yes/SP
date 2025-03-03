@@ -32,7 +32,7 @@ from pytorch3d.renderer import (
     OrthographicCameras,
 )
 from utils.graphics_utils import get_orthographic_camera, depth_map_to_pos_map
-from utils.losses import chamfer_loss, bound_loss, depth_map_smooth_loss
+from utils.losses import chamfer_loss, bound_loss, depth_map_smooth_loss, full_aiap_loss
 import yaml
 def safe_exists(path):
     if path is None:
@@ -369,6 +369,21 @@ class AvatarTrainer:
                 batch_losses.update({
                     'depth_smooth_loss': depth_smooth_loss.item(),
                 })
+
+        if ((self.loss_weight.get('aiap_xyz', 0.) or self.loss_weight.get('aiap_cov', 0.))
+                and 'gaussian_vals' in render_output
+                and 'posed_gaussian_vals' in render_output
+                and 'filtering_mask' in render_output):
+            filtering_mask = render_output["filtering_mask"]
+            aiap_xyz_loss, aiap_cov_loss = full_aiap_loss(render_output["gaussian_vals"], render_output["posed_gaussian_vals"], mask=filtering_mask)
+            total_loss += self.loss_weight.get('aiap_xyz', 0.) * aiap_xyz_loss
+            batch_losses.update({
+                'aiap_xyz_loss': aiap_xyz_loss.item(),
+            })
+            total_loss += self.loss_weight.get('aiap_cov', 0.) * aiap_cov_loss
+            batch_losses.update({
+                'aiap_cov_loss': aiap_cov_loss.item(),
+            })
 
         # forward_end.record()
 
