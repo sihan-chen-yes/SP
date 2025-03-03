@@ -608,6 +608,16 @@ class AvatarNet(nn.Module):
         with torch.no_grad():
             inverse_depth_map = get_orthographic_depth_map(inverse_cano_pts_filtered, self.front_camera, self.back_camera)
             inverse_opacity_map = (inverse_depth_map > 0.).to(torch.float32) * 0.9
+
+        # aiap loss
+        # TODO scaling_modifier
+        covariance = self.cano_gaussian_model.covariance_activation(gaussian_vals["scales"], scaling_modifier=1, rotation=gaussian_vals["rotations"])
+        gaussian_vals.update({"covariance": covariance})
+        posed_covariance = self.cano_gaussian_model.covariance_activation(posed_gaussian_vals["scales"], scaling_modifier=1, rotation=posed_gaussian_vals["rotations"])
+        posed_gaussian_vals.update({"covariance": posed_covariance})
+        # inverse_covariance = self.cano_gaussian_model.covariance_activation(inverse_cano_gaussian_vals["scales"], scaling_modifier=1, rotation=inverse_cano_gaussian_vals["rotations"])
+        # inverse_cano_gaussian_vals.update({"covariance": inverse_covariance})
+
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
@@ -646,6 +656,9 @@ class AvatarNet(nn.Module):
             "scales": scales,
 
             'predicted_skinning_weight': skinning_weight,
+
+            "gaussian_vals": gaussian_vals,
+            "posed_gaussian_vals": posed_gaussian_vals,
         }
 
         # if not self.training:
