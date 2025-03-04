@@ -294,7 +294,7 @@ class MvRgbDatasetBase(Dataset):
             pose_conds = []
             mask = None
             for pose_idx in tqdm(self.pose_list, desc = 'Loading position maps...'):
-                pose_map = cv.imread(self.data_dir + '/smpl_pos_map/%08d.exr' % pose_idx, cv.IMREAD_UNCHANGED)
+                pose_map = cv.imread(self.data_dir + "/smpl_pos_map_{}/{:08d}.exr".format(self.map_size, pose_idx), cv.IMREAD_UNCHANGED)
                 pose_map = pose_map[:, :pose_map.shape[1] // 2]
                 if mask is None:
                     mask = np.linalg.norm(pose_map, axis = -1) > 1e-6
@@ -307,7 +307,7 @@ class MvRgbDatasetBase(Dataset):
             self.pos_map_mask = mask
         else:
             self.pca = joblib.load(self.data_dir + "/smpl_pos_map_{}/pca_{}.ckpt".format(self.map_size, n_components))
-            pose_map = cv.imread(sorted(glob.glob(self.data_dir + '/smpl_pos_map/0*.exr'))[0], cv.IMREAD_UNCHANGED)
+            pose_map = cv.imread(sorted(glob.glob(self.data_dir + '/smpl_pos_map_{}/0*.exr'.format(self.map_size)))[0], cv.IMREAD_UNCHANGED)
             pose_map = pose_map[:, :pose_map.shape[1] // 2]
             self.pos_map_mask = np.linalg.norm(pose_map, axis = -1) > 1e-6
 

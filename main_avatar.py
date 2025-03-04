@@ -695,7 +695,6 @@ class AvatarTrainer:
             output_dir += '/vanilla'
         print('# Output dir: \033[1;31m%s\033[0m' % output_dir)
 
-        os.makedirs(output_dir + '/live_skeleton', exist_ok = True)
         os.makedirs(output_dir + '/rgb_map', exist_ok = True)
         os.makedirs(output_dir + '/mask_map', exist_ok = True)
 
@@ -830,6 +829,7 @@ class AvatarTrainer:
                 time_start.record()
 
             if self.opt['test'].get('render_skeleton', False):
+                os.makedirs(output_dir + '/live_skeleton', exist_ok=True)
                 from utils.visualize_skeletons import construct_skeletons
                 skel_vertices, skel_faces = construct_skeletons(item['joints'].cpu().numpy(), item['kin_parent'].cpu().numpy())
                 skel_mesh = trimesh.Trimesh(skel_vertices, skel_faces, process = False)

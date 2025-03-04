@@ -51,17 +51,18 @@ train:
 test:
   dataset: MvRgbDatasetAvatarReX
   data:
+    map_size: 512
     data_dir: ../avatarrex/lbn1
     frame_range: *id001
     subject_name: avatarrex_lbn1
-  pose_data:
+#  pose_data:
 #    data_path: ../Pose/thuman4/pose_00.npz
 #    frame_range: [2000, 2500]
 #    data_path: ../Pose/AMASS/CMU/06/06_13_poses.npz
-    data_path: ../Pose/AMASS/CMU/10/10_05_poses.npz
-    frame_interval: 4
-  view_setting: moving
-  render_view_idx: 18
+#    data_path: ../Pose/AMASS/CMU/10/10_05_poses.npz
+#    frame_interval: 4
+  view_setting: camera
+  render_view_idx: 0
   global_orient: true
   img_scale: 1.0
   save_mesh: true
