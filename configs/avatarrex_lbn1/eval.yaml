@@ -1,0 +1,9 @@
+exp: avatar
+cam_id: 0
+iters: 45000
+dataset: avatarrex
+subject: lbn1
+frame_range:
+- 0
+- 1901
+- 1
