@@ -78,11 +78,11 @@ class AvatarNet(nn.Module):
         self.properties = 1 + 3 + 4
         self.other_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = self.properties, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         # depth and xy nr offset
-        self.offset_net = DualStyleUNet(inp_size =self.map_size // 2, inp_ch = 3, out_ch =1 + 2, out_size = self.map_size, style_dim =self.map_size // 2, n_mlp = 2)
+        self.depth_net = DualStyleUNet(inp_size=self.map_size // 2, inp_ch=3, out_ch=1, out_size=self.map_size, style_dim=self.map_size // 2, n_mlp=2)
 
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
-        self.offset_style = torch.ones([1, self.offset_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.offset_net.style_dim)
+        self.depth_style = torch.ones([1, self.depth_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.depth_net.style_dim)
         if self.lbs_weights == "NN":
             self.skinning_net = get_skinning_mlp(3, 55+4, config.opt['model']['skinning_network'])
 
@@ -144,15 +144,9 @@ class AvatarNet(nn.Module):
         pose_map = torch.from_numpy(smpl_pos_map).to(torch.float32).to(config.device)
         pose_map = pose_map[:3]
 
-        # use depth map predicted from 2D pose map
-        predicted_depth_map, xy_nr_offset_map = self.get_predicted_position_map(pose_map)
-        xy_nr_offset = xy_nr_offset_map.view(-1, 2)
-
+        predicted_depth_map = self.get_predicted_depth_map(pose_map)
         opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
-        cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True,
-                                                 front_camera=self.front_camera, back_camera=self.back_camera)
-        # apply xy nr offset
-        cano_pts[:, :2] = cano_pts[:, :2] + xy_nr_offset
+        cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
         colors, color_map = self.get_colors(pose_map, self.bounding_mask)
 
         self.hand_positions = cano_pts#[self.hand_mask]
@@ -250,18 +244,23 @@ class AvatarNet(nn.Module):
 
     def get_others(self, pose_map, mask, return_map = False):
         other_map, _ = self.other_net([self.other_style], pose_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(other_map, [self.properties, self.properties], 1)
+        front_map, back_map = torch.split(other_map, [8, 8], 1)
         other_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0)
-        height, width = other_map.shape[0], other_map.shape[1]
-        others = other_map[mask]  # (N, #properties)
+        others = other_map[mask]  # (N, 8)
+        # others = other_map.view(-1, 8)  # (N, 8)
 
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
-        # predict offset value
-        opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
-        scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
-        rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
+        # predict absolute value
+        opacity = self.cano_gaussian_model.opacity_activation(opacity)
+        scales = self.cano_gaussian_model.scaling_activation(scales)
+        rotations = self.cano_gaussian_model.rotation_activation(rotations)
+        # TODO
+        # opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
+        # scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
+        # rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
+
         # opacity_map
-        opacity_map = opacity.reshape(height, width)
+        opacity_map = self.cano_gaussian_model.opacity_activation(other_map[:, :, 0])
         if return_map:
             return opacity, scales, rotations, opacity_map
         else:
@@ -276,26 +275,22 @@ class AvatarNet(nn.Module):
 
         return colors, color_map
 
-    def get_predicted_offset_map(self, pose_map):
-        offset_map, _ = self.offset_net([self.offset_style], pose_map[None], randomize_noise = False)
-        front_map, back_map = torch.split(offset_map, [3, 3], 1)
-        offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
-        # map to [-1, 1] for depth
-        # 0 for background
-        offset_map[:, :, 0] = torch.nn.functional.tanh(offset_map[:, :, 0])
-        return offset_map
-
-    def get_predicted_position_map(self, pose_map):
+    def get_predicted_depth_map(self, pose_map):
         offset_map = self.get_predicted_offset_map(pose_map)
-        depth_offset_map, xy_nr_offset_map = torch.split(offset_map, [1, 2], 2)
         # recover depth offset to depth
-        depth_map = (depth_offset_map + 1) / 2
+        depth_map = (offset_map + 1) / 2
         depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
                                                  + self.cano_smpl_depth_offset_map_min + 10)
-        depth_map = depth_map.squeeze(-1)
-        # TODO
-        xy_nr_offset_map = xy_nr_offset_map * self.xy_nr_scaling
-        return depth_map, xy_nr_offset_map
+        return depth_map
+
+    def get_predicted_offset_map(self, pose_map):
+        depth_offset_map, _ = self.depth_net([self.depth_style], pose_map[None], randomize_noise = False)
+        front_map, back_map = torch.split(depth_offset_map, [1, 1], 1)
+        depth_offset_map = torch.cat([front_map, back_map], 3)[0].permute(1, 2, 0).squeeze()
+        # map to [-1, 1]
+        # 0 for background
+        depth_offset_map = torch.nn.functional.tanh(depth_offset_map)
+        return depth_offset_map
 
     def get_predicted_skinning_weight(self, cano_pts):
         # use cano pts as input
@@ -364,14 +359,9 @@ class AvatarNet(nn.Module):
             front_viewdirs, back_viewdirs = None, None
 
         # use depth map predicted from 2D pose map
-        predicted_depth_map, xy_nr_offset_map = self.get_predicted_position_map(pose_map)
-        xy_nr_offset = xy_nr_offset_map.view(-1, 2)
-
+        predicted_depth_map = self.get_predicted_depth_map(pose_map)
         opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
-        cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True,
-                                                 front_camera=self.front_camera, back_camera=self.back_camera)
-        # apply xy nr offset
-        cano_pts[:, :2] = cano_pts[:, :2] + xy_nr_offset
+        cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True, front_camera=self.front_camera, back_camera=self.back_camera)
         colors, color_map = self.get_colors(pose_map, self.bounding_mask, front_viewdirs, back_viewdirs)
         skinning_weight = self.get_predicted_skinning_weight(cano_pts) if self.lbs_weights == "NN" else None
         # for visualize
@@ -454,7 +444,6 @@ class AvatarNet(nn.Module):
         ret = {
             'rgb_map': rgb_map,
             'mask_map': mask_map,
-            'xy_nr_offset': xy_nr_offset,
 
             'depth_map': depth_map,
 
