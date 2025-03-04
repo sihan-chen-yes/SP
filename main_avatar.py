@@ -59,6 +59,7 @@ class AvatarTrainer:
         self.bg_color = (1., 1., 1.)
         self.bg_color_cuda = torch.from_numpy(np.asarray(self.bg_color)).to(torch.float32).to(config.device)
         self.loss_weight = self.opt['train']['loss_weight']
+        self.loss_range = self.opt['train']['loss_range']
         self.finetune_color = self.opt['train']['finetune_color']
         print('# Parameter number of AvatarNet is %d' % (sum([p.numel() for p in self.avatar_net.parameters()])))
 
@@ -126,7 +127,7 @@ class AvatarTrainer:
             normalize = True
         ).mean()
         return lpips_loss
-    #TODO
+
     def forward_one_pass_pretrain(self, items):
         total_loss = 0
         batch_losses = {}
@@ -201,7 +202,7 @@ class AvatarTrainer:
         self.optm.step()
         self.optm.zero_grad()
         return total_loss, batch_losses
-    #TODO
+
     def forward_one_pass(self, items):
         # forward_start = torch.cuda.Event(enable_timing = True)
         # forward_end = torch.cuda.Event(enable_timing = True)
@@ -275,14 +276,7 @@ class AvatarTrainer:
                 'lpips_loss': lpips_loss.item()
             })
 
-        # if self.loss_weight['offset'] > 0.:
-        #     offset_loss = torch.linalg.norm(offset, dim = -1).mean()
-        #     total_loss += self.loss_weight['offset'] * offset_loss
-        #     batch_losses.update({
-        #         'offset_loss': offset_loss.item()
-        #     })
-
-        if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output and self.iter_idx < 10000:
+        if self.loss_weight.get('opacity', 0.) and 'predicted_mask' in render_output and self.iter_idx < self.loss_range["opacity"]["end"]:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
             # regularization for smpl opacity
@@ -326,8 +320,18 @@ class AvatarTrainer:
                 'skinning_weight_loss': skinning_weight_loss.item(),
             })
 
+        if self.loss_weight.get('xy_nr_offset', 0.) and 'xy_nr_offset' in render_output:
+            xy_nr_offset = render_output['xy_nr_offset']
+            # regularization for xy_nr_offset
+            # xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
+            xy_nr_offset_loss = torch.linalg.norm(xy_nr_offset, dim = -1).mean()
+            total_loss += self.loss_weight.get('xy_nr_offset', 0.) * xy_nr_offset_loss
+            batch_losses.update({
+                'xy_nr_offset_loss': xy_nr_offset_loss.item(),
+            })
+
         # start self-supervision
-        if self.iter_idx >= 30000:
+        if self.iter_idx >= self.loss_range["inverse_opacity_map"]["start"]:
             # if self.loss_weight.get('inverse_cano_pts', 0.) and 'inverse_cano_pts_filtered' in render_output and self.iter_idx > 30000:
             #     inverse_cano_pts_filtered = render_output['inverse_cano_pts_filtered']
             #     inverse_cano_pts_loss = chamfer_loss(render_output["cano_pts"], inverse_cano_pts_filtered)
@@ -385,16 +389,6 @@ class AvatarTrainer:
             total_loss += self.loss_weight.get('aiap_cov', 0.) * aiap_cov_loss
             batch_losses.update({
                 'aiap_cov_loss': aiap_cov_loss.item(),
-            })
-
-        if self.loss_weight.get('xy_nr_offset', 0.) and 'xy_nr_offset' in render_output:
-            xy_nr_offset = render_output['xy_nr_offset']
-            # regularization for xy_nr_offset
-            # xy_nr_offset_loss = torch.abs(xy_nr_offset).mean()
-            xy_nr_offset_loss = torch.linalg.norm(xy_nr_offset, dim = -1).mean()
-            total_loss += self.loss_weight.get('xy_nr_offset', 0.) * xy_nr_offset_loss
-            batch_losses.update({
-                'xy_nr_offset_loss': xy_nr_offset_loss.item(),
             })
 
         # forward_end.record()
@@ -550,20 +544,7 @@ class AvatarTrainer:
 
                 # TODO no densification to check
                 visibility_filter = render_output["visibility_filter"]
-                radii = render_output["radii"]
-                viewspace_points = render_output["viewspace_points"]
                 with torch.no_grad():
-                #     # Densification
-                #     if self.iter_idx < self.opt["train"]["densify_until_iter"]:
-                #         # Keep track of max radii in image-space for pruning
-                #         self.avatar_net.cano_gaussian_model.max_radii2D[visibility_filter] = torch.max(self.avatar_net.cano_gaussian_model.max_radii2D[visibility_filter],
-                #                                                                                        radii[visibility_filter])
-                #         self.avatar_net.cano_gaussian_model.add_densification_stats(viewspace_points, visibility_filter)
-                #
-                #         if self.iter_idx > self.opt["train"]["densify_from_iter"] and self.iter_idx % self.opt["train"]["densification_interval"] == 0:
-                #             size_threshold = 20
-                #             self.avatar_net.cano_gaussian_model.densify_and_prune(self.opt["train"]["densify_grad_threshold"], self.opt["train"]["opacity_threshold"], self.opt["train"]["camera_extent"], size_threshold)
-
                     # record batch loss
                     for key, loss in batch_losses.items():
                         if key in smooth_losses:
@@ -595,8 +576,6 @@ class AvatarTrainer:
                         self.mini_test(eval_cano_pts = eval_cano_pts)
 
                     if self.iter_idx % self.opt['train']['ckpt_interval']['batch'] == 0 and self.iter_idx != 0:
-                        for folder in glob.glob(self.opt['train']['net_ckpt_dir'] + '/batch_*'):
-                            shutil.rmtree(folder)
                         model_folder = self.opt['train']['net_ckpt_dir'] + '/batch_%d' % self.iter_idx
                         os.makedirs(model_folder, exist_ok = True)
                         self.save_ckpt(model_folder, save_optm = True)
@@ -639,7 +618,7 @@ class AvatarTrainer:
                                     exact_hand_pose = True)
         items = net_util.to_cuda(item, add_batch = False)
 
-        gs_render = self.avatar_net.render(items, self.bg_color, pretrain = pretraining)
+        gs_render = self.avatar_net.render(items, self.bg_color)
         # gs_render = self.avatar_net.render_debug(items)
         rgb_map = gs_render['rgb_map']
         rgb_map.clip_(0., 1.)
@@ -679,7 +658,7 @@ class AvatarTrainer:
                                     exact_hand_pose = True)
         items = net_util.to_cuda(item, add_batch = False)
 
-        gs_render = self.avatar_net.render(items, bg_color = self.bg_color, pretrain = pretraining)
+        gs_render = self.avatar_net.render(items, bg_color = self.bg_color)
         # gs_render = self.avatar_net.render_debug(items)
         rgb_map = gs_render['rgb_map']
         rgb_map.clip_(0., 1.)
@@ -707,7 +686,6 @@ class AvatarTrainer:
             visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_%d.ply' % self.iter_idx, gs_render["posed_pts"].cpu().numpy(), gs_render["posed_pts_w"].cpu().numpy())
             visualize_util.save_ply_w_pts_w(output_dir + '/posed_pts/iter_posed_filtered_%d.ply' % self.iter_idx, gs_render["posed_pts_filtered"].cpu().numpy(), gs_render["posed_pts_w_filtered"].cpu().numpy())
 
-
         # export mask
         predicted_mask_map = gs_render["predicted_mask"].cpu().numpy()
         predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
@@ -719,43 +697,9 @@ class AvatarTrainer:
         os.makedirs(output_dir + '/inverse', exist_ok=True)
         cv.imwrite(output_dir + '/inverse/inverse_opacity_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_opacity_map"].cpu().numpy())
         cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_depth_map"].cpu().numpy())
-        # # export pos map
-        # pos_map = gs_render["pos_map"].cpu().numpy()
-        # # normalize to [0,1]
-        # pos_map = (pos_map - pos_map.min()) / (pos_map.max() - pos_map.min())
-        # os.makedirs(output_dir + '/pos_map', exist_ok=True)
-        # cv.imwrite(output_dir + '/pos_map/iter_%d.exr' % self.iter_idx, pos_map)
-
-        # uv = self.avatar_net.cano_gaussian_model.get_uv
-        # pixel_coords = torch.round(uv * torch.tensor((self.height, self.width), device="cuda")).long()
-        # pixel_coords[:, 0] = torch.clamp(pixel_coords[:, 0], min=0, max=self.height - 1)
-        # pixel_coords[:, 1] = torch.clamp(pixel_coords[:, 1], min=0, max=self.width - 1)
-        # uv_map = torch.zeros((self.height, self.width, 3))
-        # colors = gs_render["colors"]
-        # for (x, y), color in zip(pixel_coords, colors):
-        #     uv_map[x, y] = color
-        # uv_map.clip_(0., 1.)
-        # uv_map = (uv_map.cpu().numpy() * 255).astype(np.uint8)
-        # os.makedirs(output_dir + '/uv_map', exist_ok=True)
-        # cv.imwrite(output_dir + '/uv_map/iter_%d.jpg' % self.iter_idx, uv_map)
-
-
-        # cano_template_depth_map = colormap(gs_render["cano_template_depth_map"].cpu()).numpy()
-        # template_depth_map = colormap(gs_render["template_depth_map"].cpu()).numpy()
-        # cano_template_ort_depth_map = colormap(self.avatar_net.cano_template_depth_map.cpu()).numpy()
-        # cano_depth_map = colormap(gs_render["cano_depth_map"].cpu()).numpy()
         depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
-        # cano_ort_depth_map = colormap(self.avatar_net.cano_smpl_depth_map.cpu()).numpy()
-
-
-        # cv.imwrite(output_dir + '/template/cano_template_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_depth_map)
-        # cv.imwrite(output_dir + '/template/template_depth_map_iter_%d.jpg' % self.iter_idx, template_depth_map)
-        # cv.imwrite(output_dir + '/template/cano_template_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_template_ort_depth_map)
-
         os.makedirs(output_dir + '/train', exist_ok=True)
-        # cv.imwrite(output_dir + '/train/cano_depth_map_iter_%d.jpg' % self.iter_idx, cano_depth_map)
         cv.imwrite(output_dir + '/train/depth_map_iter_%d.jpg' % self.iter_idx, depth_map)
-        # cv.imwrite(output_dir + '/train/cano_ort_depth_map_iter_%d.jpg' % self.iter_idx, cano_ort_depth_map)
 
         self.avatar_net.train()
 
@@ -1020,7 +964,6 @@ class AvatarTrainer:
             'epoch_idx': self.epoch_idx,
             'iter_idx': self.iter_idx,
             'avatar_net': self.avatar_net.state_dict(),
-            'gaussian': self.avatar_net.cano_gaussian_model.capture(),
         }
         print('Saving networks to ', path + '/net.pt')
         torch.save(net_dict, path + '/net.pt')
@@ -1039,10 +982,6 @@ class AvatarTrainer:
             self.avatar_net.load_state_dict(net_dict['avatar_net'])
         else:
             print('[WARNING] Cannot find "avatar_net" from the network checkpoint!')
-        if 'gaussian' in net_dict:
-            self.avatar_net.cano_gaussian_model.restore(net_dict['gaussian'], self.opt["model"]["gaussian"])
-        else:
-            print('[WARNING] Cannot find "gaussian" from the network checkpoint!')
         epoch_idx = net_dict['epoch_idx']
         iter_idx = net_dict['iter_idx']
 
@@ -1066,17 +1005,19 @@ if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument('-c', '--config_path', type = str, help = 'Configuration file path.')
     arg_parser.add_argument('-m', '--mode', type = str, help = 'Running mode.', default = 'train')
-    arg_parser.add_argument('-d', '--dir', type=str, help='result directory path')
+    arg_parser.add_argument('-e', '--exp', type=str, help='exp name for result directory')
     args = arg_parser.parse_args()
 
     config.load_global_opt(args.config_path)
     if args.mode is not None:
         config.opt['mode'] = args.mode
+    if args.exp is not None:
+        config.opt["train"]["exp"] = args.exp
 
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
         # set training results directory
-        config.opt['train']['net_ckpt_dir'] = args.dir
+        config.opt['train']['net_ckpt_dir'] = f'./results/{config.opt["train"]["data"]["subject_name"]}/{config.opt["train"]["exp"]}'
         timestamp = datetime.datetime.now()
         log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
         writer = SummaryWriter(log_dir)
@@ -1092,7 +1033,7 @@ if __name__ == '__main__':
             trainer.pretrain(timestamp=timestamp)
         trainer.train(timestamp=timestamp)
     elif config.opt['mode'] == 'test':
-        config.opt['test']['exp'] = args.dir
+        config.opt['test']['exp'] = args.exp
         trainer.test()
     else:
         raise NotImplementedError('Invalid running mode!')
