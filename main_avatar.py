@@ -676,7 +676,8 @@ class AvatarTrainer:
             self.opt['test']['n_pca'] = -1  # cancel PCA for training pose reconstruction
 
         self.dataset = testing_dataset
-        iter_idx = self.load_ckpt(self.opt['test']['prev_ckpt'], False)[1]
+        prev_ckpt = './results/{}/{}/batch_{}'.format(training_dataset.subject_name, self.opt["test"]["exp"], self.opt['test']['test_iters'])
+        iter_idx = self.load_ckpt(prev_ckpt, False)[1]
 
         output_dir = self.opt['test'].get('output_dir', None)
         if output_dir is None:
@@ -685,7 +686,8 @@ class AvatarTrainer:
                 view_folder = 'cam_%03d' % config.opt['test']['render_view_idx']
             else:
                 view_folder = view_setting + '_view'
-            exp_name = os.path.basename(os.path.dirname(self.opt['test']['prev_ckpt']))
+            # exp_name = os.path.basename(os.path.dirname(self.opt['test']['prev_ckpt']))
+            exp_name = self.opt['test']['exp']
             output_dir = f'./test_results/{training_dataset.subject_name}/{exp_name}/{dataset_name}_{seq_name}_{view_folder}' + '/batch_%06d' % iter_idx
 
         use_pca = self.opt['test'].get('n_pca', -1) >= 1
@@ -967,18 +969,18 @@ if __name__ == '__main__':
     if args.mode is not None:
         config.opt['mode'] = args.mode
 
-    # set training results directory
-    config.opt['train']['net_ckpt_dir'] = args.dir
-    timestamp = datetime.datetime.now()
-    log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
-    writer = SummaryWriter(log_dir)
-
-    print(yaml.safe_dump(config.opt, sort_keys=False))
-    with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
-        fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
-
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
+        # set training results directory
+        config.opt['train']['net_ckpt_dir'] = args.dir
+        timestamp = datetime.datetime.now()
+        log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
+        writer = SummaryWriter(log_dir)
+
+        print(yaml.safe_dump(config.opt, sort_keys=False))
+        with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
+            fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
+
         if not safe_exists(config.opt['train']['net_ckpt_dir'] + '/pretrained_smpl') \
                 and not safe_exists(config.opt['train']['pretrained_dir'])\
                 and not safe_exists(config.opt['train']['prev_ckpt']):
@@ -986,6 +988,7 @@ if __name__ == '__main__':
             trainer.pretrain(timestamp=timestamp)
         trainer.train(timestamp=timestamp)
     elif config.opt['mode'] == 'test':
+        config.opt['test']['exp'] = args.dir
         trainer.test()
     else:
         raise NotImplementedError('Invalid running mode!')
