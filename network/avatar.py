@@ -236,7 +236,7 @@ class AvatarNet(nn.Module):
         depth_map = (depth_map * (self.cano_smpl_depth_offset_map_max - self.cano_smpl_depth_offset_map_min)
                                                  + self.cano_smpl_depth_offset_map_min + 10)
         depth_map = depth_map.squeeze(-1)
-        # xy_nr_offset_map = xy_nr_offset_map * 0.05
+        xy_nr_offset_map = xy_nr_offset_map * 0.05
         return depth_map, xy_nr_offset_map
 
     # def get_interpolated_feat(self, pose_map):
