@@ -40,7 +40,7 @@ train:
     depth_smooth: 0.05
     aiap_xyz: 0.0
     aiap_cov: 0.0
-    xy_nr_offset: 0.005
+    xy_nr_offset: 0.0
   loss_range:
     opacity:
       end: 10000
@@ -84,7 +84,7 @@ model:
   random_style: false
   lbs_weights: lbs_weights
   lbs_weight_interpolation: linear
-  xy_nr_scaling: 0.05
+  xy_nr_scaling: 0.0
 
   mlp:
     n_neurons: 64
