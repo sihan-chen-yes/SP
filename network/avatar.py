@@ -251,9 +251,9 @@ class AvatarNet(nn.Module):
 
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
         # predict offset value
-        opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
-        scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
-        rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
+        opacity = self.cano_gaussian_model.opacity_activation(opacity)
+        scales = self.cano_gaussian_model.scaling_activation(scales)
+        rotations = self.cano_gaussian_model.rotation_activation(rotations)
         # opacity_map
         opacity_map = opacity.reshape(height, width)
         if return_map:
