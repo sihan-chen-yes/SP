@@ -99,7 +99,7 @@ if __name__ == '__main__':
     process = subprocess.run(command, shell=True, capture_output=True, text=True)
 
     output = process.stdout + process.stderr
-
+    print(output)
     with open(results_file, 'a') as fp:
         fp.write("--- Ours ---\n")
         fp.write(output)
