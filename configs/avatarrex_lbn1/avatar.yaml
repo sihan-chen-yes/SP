@@ -72,7 +72,7 @@ test:
   render_skeleton: false
   save_tex_map: false
   save_ply: false
-  fix_hand: false
+  fix_hand: true
   fix_hand_id: 55
   n_pca: 20
   sigma_pca: 2.0
