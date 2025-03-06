@@ -182,17 +182,21 @@ class AvatarNet(nn.Module):
 
         return posed_gaussian_vals
 
-    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False):
+    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False, cano_pts_w=None):
         # smplx inverse transformation
         # live 2 cano space: inverse LBS
         # 1. use NN skinning weight 2.interpolate lbs weight
         if self.lbs_weights == "lbs_weights":
-            # pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-            # obs_lbs_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.lbs_init_points) + pt_mats[..., :3, 3]
-            # pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], obs_lbs_pts)
-            pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], items["live_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
-            # inverse LBS transformation matrix
-            pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
+            if cano_pts_w == None:
+                pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], items["live_smpl_v"],
+                                           lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
+                # inverse LBS transformation matrix
+                pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
+            else:
+                pts_w = cano_pts_w
+                pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
+                # inverse LBS transformation matrix
+                pt_mats = torch.linalg.inv(pt_mats)
         else:
             # pts_w under cano space
             pts_w = posed_gaussian_vals["skinning_weight"]
@@ -418,7 +422,7 @@ class AvatarNet(nn.Module):
 
         posed_pts = posed_gaussian_vals["positions"]
         # inverse LBS
-        inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True)
+        inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, cano_pts_w=cano_pts_w)
         inverse_cano_pts = inverse_cano_gaussian_vals["positions"]
         inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
 
