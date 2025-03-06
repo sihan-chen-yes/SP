@@ -280,3 +280,10 @@ def aiap_loss(x_canonical, x_deformed, n_neighbors=5, nn_ix=None):
     loss = F.l1_loss(dists_canonical, dists_deformed)
 
     return loss
+
+def binary_cross_entropy(input, target, epsilon=1e-6):
+    """
+    F.binary_cross_entropy is not numerically stable in mixed-precision training.
+    """
+    input = torch.clamp(input, epsilon, 1 - epsilon)
+    return -(target * torch.log(input) + (1 - target) * torch.log(1 - input)).mean()

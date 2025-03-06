@@ -32,7 +32,7 @@ from pytorch3d.renderer import (
     OrthographicCameras,
 )
 from utils.graphics_utils import get_orthographic_camera, depth_map_to_pos_map
-from utils.losses import chamfer_loss, bound_loss, depth_map_smooth_loss, full_aiap_loss
+from utils.losses import chamfer_loss, bound_loss, depth_map_smooth_loss, full_aiap_loss, binary_cross_entropy
 import yaml
 def safe_exists(path):
     if path is None:
@@ -286,6 +286,16 @@ class AvatarTrainer:
             total_loss += lambda_opacity * opacity_loss
             batch_losses.update({
                 'opacity_loss': opacity_loss.item(),
+            })
+
+        if self.loss_weight.get('opaque', 0.) and 'predicted_mask' in render_output:
+            predicted_mask = render_output['predicted_mask']
+            # encouraging final ray opacity to be 0 or 1
+            opaque_loss = binary_cross_entropy(predicted_mask, predicted_mask)
+            lambda_opaque = self.loss_weight.get('opaque', 0.)
+            total_loss += lambda_opaque * opaque_loss
+            batch_losses.update({
+                'opaque_loss': opaque_loss.item(),
             })
 
         if self.loss_weight.get('opacity_symmetric', 0.) and 'predicted_mask' in render_output:
