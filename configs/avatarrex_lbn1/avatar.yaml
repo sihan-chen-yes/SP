@@ -37,7 +37,7 @@ train:
     inverse_cano_pts: 0.0
     inverse_depth_map: 0.0
     inverse_opacity_map: 0.01
-    depth_smooth: 0.05
+    depth_smooth: 0.0
     aiap_xyz: 0.0
     aiap_cov: 0.0
     xy_nr_offset: 0.0
