@@ -144,10 +144,16 @@ class AvatarNet(nn.Module):
         pose_map = torch.from_numpy(smpl_pos_map).to(torch.float32).to(config.device)
         pose_map = pose_map[:3]
 
-        cano_pts = self.get_positions(pose_map)
+        # use depth map predicted from 2D pose map
+        predicted_depth_map, xy_nr_offset_map = self.get_predicted_position_map(pose_map)
+        xy_nr_offset = xy_nr_offset_map.view(-1, 2)
 
-        opacity, scales, rotations, xy_nr_offset = self.get_others(pose_map)
-        colors, color_map = self.get_colors(pose_map)
+        opacity, scales, rotations, opacity_map = self.get_others(pose_map, self.bounding_mask, return_map=True)
+        cano_pts, pos_map = depth_map_to_pos_map(predicted_depth_map, self.bounding_mask, return_map=True,
+                                                 front_camera=self.front_camera, back_camera=self.back_camera)
+        # apply xy nr offset
+        cano_pts[:, :2] = cano_pts[:, :2] + xy_nr_offset
+        colors, color_map = self.get_colors(pose_map, self.bounding_mask)
 
         self.hand_positions = cano_pts#[self.hand_mask]
         self.hand_opacity = opacity#[self.hand_mask]
