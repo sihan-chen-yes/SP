@@ -288,6 +288,16 @@ class AvatarTrainer:
                 'opacity_loss': opacity_loss.item(),
             })
 
+        if self.loss_weight.get('opaque', 0.) and 'predicted_mask' in render_output:
+            predicted_mask = render_output['predicted_mask']
+            # encouraging final ray opacity to be 0 or 1
+            opaque_loss = torch.nn.BCELoss()(predicted_mask, predicted_mask)
+            lambda_opaque = self.loss_weight.get('opaque', 0.)
+            total_loss += lambda_opaque * opaque_loss
+            batch_losses.update({
+                'opaque_loss': opaque_loss.item(),
+            })
+
         if self.loss_weight.get('opacity_symmetric', 0.) and 'predicted_mask' in render_output:
             predicted_mask = render_output['predicted_mask']
             front_mask, back_mask = torch.split(predicted_mask, [self.avatar_net.map_size, self.avatar_net.map_size], 1)

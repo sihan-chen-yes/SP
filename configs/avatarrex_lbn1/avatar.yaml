@@ -29,6 +29,7 @@ train:
     l1: 1.0
     lpips: 0.1
     mask: 0.1
+    opaque: 0.1
     predicted_depth: 0.1
     opacity: 0.1
     opacity_symmetric: 0.003
