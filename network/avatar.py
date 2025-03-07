@@ -344,6 +344,15 @@ class AvatarNet(nn.Module):
         })
         return live_pos_map
 
+    def filtering_gaussian(self, gaussian_vals, filtering_mask):
+        filtered_gaussian_vals = gaussian_vals.copy()
+        for k, v in gaussian_vals.items():
+            if isinstance(v, torch.Tensor):
+                filtered_gaussian_vals[k] = v[filtering_mask]
+            else:
+                filtered_gaussian_vals[k] = v
+        return filtered_gaussian_vals
+
     def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
         """
         Note that no batch index in items.
@@ -377,7 +386,6 @@ class AvatarNet(nn.Module):
         # for visualize
         filtering_mask = (opacity_map >= 0.5).flatten()
 
-        cano_pts_filtered = cano_pts[filtering_mask]
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
             import utils.geo_util as geo_util
@@ -408,11 +416,17 @@ class AvatarNet(nn.Module):
         }
 
         posed_gaussian_vals = self.transform_cano2live(gaussian_vals, items)
+
         cano_pts_w = gaussian_vals["skinning_weight"]
-        cano_pts_w_filtered = cano_pts_w[filtering_mask]
+
+        # filtering
+        gaussian_vals_filtered = self.filtering_gaussian(gaussian_vals, filtering_mask)
+        cano_pts_filtered = gaussian_vals_filtered["positions"]
+        cano_pts_w_filtered = gaussian_vals_filtered["skinning_weight"]
+        posed_gaussian_vals_filtered = self.filtering_gaussian(posed_gaussian_vals, filtering_mask)
 
         render_ret = render3(
-            posed_gaussian_vals,
+            posed_gaussian_vals_filtered if not self.training and config.opt['test'].get('filtering_gaussians', False) and config.opt['mode'] == 'test' else posed_gaussian_vals,
             bg_color,
             items['extr'],
             items['intr'],
@@ -430,11 +444,13 @@ class AvatarNet(nn.Module):
         # inverse LBS
         inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, cano_pts_w=cano_pts_w)
         inverse_cano_pts = inverse_cano_gaussian_vals["positions"]
-        inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
+        inverse_cano_gaussian_vals_filtered = self.filtering_gaussian(inverse_cano_gaussian_vals, filtering_mask)
+        inverse_cano_pts_filtered = inverse_cano_gaussian_vals_filtered["positions"]
 
-        posed_pts_filtered = posed_pts[filtering_mask]
+        posed_gaussian_vals_filtered = self.filtering_gaussian(posed_gaussian_vals, filtering_mask)
+        posed_pts_filtered = posed_gaussian_vals_filtered["positions"]
         posed_pts_w = posed_gaussian_vals["skinning_weight"]
-        posed_pts_w_filtered = posed_pts_w[filtering_mask]
+        posed_pts_w_filtered = posed_gaussian_vals_filtered["skinning_weight"]
 
         # use inverse_cano_pts_filtered to generate opacity for self-supervision
         # pts -> depth map is not differentiable
