@@ -39,6 +39,7 @@ class AvatarNet(nn.Module):
         self.random_style = opt.get('random_style', False)
         self.with_viewdirs = opt.get('with_viewdirs', True)
         self.xy_nr_scaling = opt.get('xy_nr_scaling', 0.05)
+        self.opacity_intensity = opt.get('opacity_intensity', 3)
 
         # read preprocessed depth map: 1.mesh based 2.pts based
         # use mesh based depth map
@@ -256,8 +257,9 @@ class AvatarNet(nn.Module):
         others = other_map[mask]  # (N, #properties)
 
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
-        # predict offset value
-        opacity = self.cano_gaussian_model.opacity_activation(opacity + self.cano_gaussian_model.get_opacity_raw)
+        # direct prediction
+        # easier to change adaptively for opacity, and better initialization
+        opacity = self.cano_gaussian_model.opacity_activation(self.opacity_intensity * opacity)
         scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
         rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
         # opacity_map
