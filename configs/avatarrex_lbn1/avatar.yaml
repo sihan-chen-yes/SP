@@ -85,7 +85,7 @@ model:
   lbs_weights: lbs_weights
   lbs_weight_interpolation: linear
   xy_nr_scaling: 0.0
-
+  opacity_intensity: 5
   mlp:
     n_neurons: 64
     n_hidden_layers: 2
