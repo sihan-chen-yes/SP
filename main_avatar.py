@@ -280,7 +280,7 @@ class AvatarTrainer:
             predicted_mask = render_output['predicted_mask']
             smpl_opacity_map = self.avatar_net.cano_smpl_opacity_map
             # regularization for smpl opacity
-            opacity_loss = torch.abs((torch.clamp(predicted_mask, max=0.9) - smpl_opacity_map)[self.avatar_net.cano_smpl_mask]).mean()
+            opacity_loss = torch.abs((predicted_mask - smpl_opacity_map)[self.avatar_net.cano_smpl_mask]).mean()
             # mask_loss = torch.nn.BCELoss()(rendered_mask, gt_mask)
             lambda_opacity = self.loss_weight.get('opacity', 0.)
             total_loss += lambda_opacity * opacity_loss
