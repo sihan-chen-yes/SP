@@ -167,18 +167,21 @@ class AvatarNet(nn.Module):
         # hand_pts.export('./debug/hand_template.obj')
         # exit(1)
 
-    def transform_cano2live(self, cano_gaussian_vals, items):
+    def transform_cano2live(self, cano_gaussian_vals, items, predicted_skinning_weight=None):
         # smplx transformation
         # cano 2 live space: LBS
         # 1. use NN skinning weight 2.interpolate lbs weight
         if self.lbs_weights == "lbs_weights":
+            assert predicted_skinning_weight == None
             # pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], self.lbs_init_points)
+            # use interpolation to compute skinning weight
             pts_w = self.get_lbs_pts_w(cano_gaussian_vals["positions"], items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
         else:
-            # neural skinning weight
-            pts_w = cano_gaussian_vals["skinning_weight"]
-        posed_gaussian_vals = cano_gaussian_vals.copy()
+            # use predicted neural skinning weight
+            pts_w = predicted_skinning_weight
         cano_gaussian_vals["skinning_weight"] = pts_w
+        # same as cano skinning weight
+        posed_gaussian_vals = cano_gaussian_vals.copy()
 
         # pick the corresponding transformation for each pts
         pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
@@ -189,28 +192,17 @@ class AvatarNet(nn.Module):
 
         return posed_gaussian_vals
 
-    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False, cano_pts_w=None):
+    def transform_live2cano(self, posed_gaussian_vals, items, use_root_finding=False):
         # smplx inverse transformation
         # live 2 cano space: inverse LBS
-        # 1. use NN skinning weight 2.interpolate lbs weight
-        if self.lbs_weights == "lbs_weights":
-            if cano_pts_w == None:
-                pts_w = self.get_lbs_pts_w(posed_gaussian_vals["positions"], items["live_smpl_v"],
-                                           lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
-                # inverse LBS transformation matrix
-                pt_mats = torch.einsum('nj,jxy->nxy', pts_w, torch.linalg.inv(items['cano2live_jnt_mats']))
-            else:
-                pts_w = cano_pts_w
-                pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
-                # inverse LBS transformation matrix
-                pt_mats = torch.linalg.inv(pt_mats)
-        else:
-            # pts_w under cano space
-            pts_w = posed_gaussian_vals["skinning_weight"]
-            pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
-            # inverse LBS transformation matrix
-            pt_mats = torch.linalg.inv(pt_mats)
-
+        # 1. use NN skinning weight 2.interpolated lbs weight
+        assert posed_gaussian_vals["skinning_weight"] != None
+        # same as cano skining weight
+        pts_w = posed_gaussian_vals["skinning_weight"]
+        pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
+        # inverse LBS transformation matrix
+        pt_mats = torch.linalg.inv(pt_mats)
+        # same cano skinning weight
         cano_gaussian_vals = posed_gaussian_vals.copy()
         cano_gaussian_vals['positions'] = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], posed_gaussian_vals['positions']) + pt_mats[..., :3, 3]
         posed_gaussian_vals["skinning_weight"] = pts_w
@@ -342,6 +334,15 @@ class AvatarNet(nn.Module):
         })
         return live_pos_map
 
+    def filtering_gaussian(self, gaussian_vals, filtering_mask):
+        filtered_gaussian_vals = gaussian_vals.copy()
+        for k, v in gaussian_vals.items():
+            if isinstance(v, torch.Tensor):
+                filtered_gaussian_vals[k] = v[filtering_mask]
+            else:
+                filtered_gaussian_vals[k] = v
+        return filtered_gaussian_vals
+
     def render(self, items, bg_color = (0., 0., 0.), use_pca = False, use_vae = False, pretrain=False):
         """
         Note that no batch index in items.
@@ -375,7 +376,6 @@ class AvatarNet(nn.Module):
         # for visualize
         filtering_mask = (opacity_map >= 0.5).flatten()
 
-        cano_pts_filtered = cano_pts[filtering_mask]
         if not self.training and config.opt['test'].get('fix_hand', False) and config.opt['mode'] == 'test':
             # print('# fuse hands ...')
             import utils.geo_util as geo_util
@@ -405,12 +405,17 @@ class AvatarNet(nn.Module):
             'max_sh_degree': self.max_sh_degree,
         }
 
-        posed_gaussian_vals = self.transform_cano2live(gaussian_vals, items)
-        cano_pts_w = gaussian_vals["skinning_weight"]
-        cano_pts_w_filtered = cano_pts_w[filtering_mask]
+        posed_gaussian_vals = self.transform_cano2live(gaussian_vals, items, predicted_skinning_weight=skinning_weight)
+        # inverse LBS
+        inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True)
+
+        # filtering
+        gaussian_vals_filtered = self.filtering_gaussian(gaussian_vals, filtering_mask)
+        posed_gaussian_vals_filtered = self.filtering_gaussian(posed_gaussian_vals, filtering_mask)
+        inverse_cano_gaussian_vals_filtered = self.filtering_gaussian(inverse_cano_gaussian_vals, filtering_mask)
 
         render_ret = render3(
-            posed_gaussian_vals,
+            posed_gaussian_vals_filtered if not self.training and config.opt['test'].get('filtering_gaussians', False) and config.opt['mode'] == 'test' else posed_gaussian_vals,
             bg_color,
             items['extr'],
             items['intr'],
@@ -425,14 +430,17 @@ class AvatarNet(nn.Module):
         radii = render_ret['radii']
 
         posed_pts = posed_gaussian_vals["positions"]
-        # inverse LBS
-        inverse_cano_gaussian_vals = self.transform_live2cano(posed_gaussian_vals, items, use_root_finding=True, cano_pts_w=cano_pts_w)
         inverse_cano_pts = inverse_cano_gaussian_vals["positions"]
-        inverse_cano_pts_filtered = inverse_cano_gaussian_vals["positions"][filtering_mask]
 
-        posed_pts_filtered = posed_pts[filtering_mask]
+        cano_pts_w = gaussian_vals["skinning_weight"]
         posed_pts_w = posed_gaussian_vals["skinning_weight"]
-        posed_pts_w_filtered = posed_pts_w[filtering_mask]
+
+        cano_pts_filtered = gaussian_vals_filtered["positions"]
+        posed_pts_filtered = posed_gaussian_vals_filtered["positions"]
+        inverse_cano_pts_filtered = inverse_cano_gaussian_vals_filtered["positions"]
+
+        cano_pts_w_filtered = gaussian_vals_filtered["skinning_weight"]
+        posed_pts_w_filtered = posed_gaussian_vals_filtered["skinning_weight"]
 
         # use inverse_cano_pts_filtered to generate opacity for self-supervision
         # pts -> depth map is not differentiable
