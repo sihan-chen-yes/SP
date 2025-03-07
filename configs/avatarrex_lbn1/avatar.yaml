@@ -44,7 +44,7 @@ train:
     xy_nr_offset: 0.0
   loss_range:
     opacity:
-      end: 10000
+      end: 30000
     inverse_opacity_map:
       start: 30000
   finetune_color: false
