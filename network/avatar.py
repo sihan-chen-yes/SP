@@ -308,12 +308,8 @@ class AvatarNet(nn.Module):
 
     def get_viewdir_feat(self, items):
         with torch.no_grad():
-            pt_mats = torch.einsum('nj,jxy->nxy', self.lbs, items['cano2live_jnt_mats'])
-            # find the nearest vertex
-            knn_ret = pytorch3d.ops.knn_points(self.cano_init_points.unsqueeze(0),
-                                               self.lbs_init_points.unsqueeze(0))
-            p_idx = knn_ret.idx.squeeze()
-            pt_mats = pt_mats[p_idx, :]
+            pts_w = self.get_lbs_pts_w(self.cano_init_points, items["cano_smpl_v"], lbs_weights=items["lbs_weights"], faces=items["smpl_faces"])
+            pt_mats = torch.einsum('nj,jxy->nxy', pts_w, items['cano2live_jnt_mats'])
             live_pts = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_init_points) + pt_mats[..., :3, 3]
             live_nmls = torch.einsum('nxy,ny->nx', pt_mats[..., :3, :3], self.cano_nmls)
             cam_pos = -torch.matmul(torch.linalg.inv(items['extr'][:3, :3]), items['extr'][:3, 3])
