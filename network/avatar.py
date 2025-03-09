@@ -33,6 +33,15 @@ class AvatarNet(nn.Module):
         super(AvatarNet, self).__init__()
         self.opt = opt
         self.map_size = config.opt['train']['data']['map_size']
+        self.rot = config.opt['train']['data']['rot']
+        if self.rot:
+            self.depth_map_dir = config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}_rot'.format(self.map_size)
+            self.pos_map_dir = config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}_rot'.format(self.map_size)
+            self.cano_weight_volume_dir = config.opt['train']['data']['data_dir'] + '/cano_weight_volume_rot.npz'
+        else:
+            self.depth_map_dir = config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}'.format(self.map_size)
+            self.pos_map_dir = config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}'.format(self.map_size)
+            self.cano_weight_volume_dir = config.opt['train']['data']['data_dir'] + '/cano_weight_volume.npz'
         self.lbs_weights = config.opt['model']['lbs_weights']
         self.lbs_weight_interpolation = config.opt['model']['lbs_weight_interpolation']
 
@@ -43,7 +52,7 @@ class AvatarNet(nn.Module):
 
         # read preprocessed depth map: 1.mesh based 2.pts based
         # use mesh based depth map
-        cano_smpl_depth_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_depth_map_{}_rot/cano_smpl_depth_map_mesh_based.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
+        cano_smpl_depth_map = cv.imread(self.depth_map_dir + '/cano_smpl_depth_map_mesh_based.exr', cv.IMREAD_UNCHANGED)
         self.cano_smpl_depth_map = torch.from_numpy(cano_smpl_depth_map).to(torch.float32).to(config.device)
         self.cano_smpl_mask = self.cano_smpl_depth_map > 0.
         # change background value to 10 by default
@@ -59,7 +68,8 @@ class AvatarNet(nn.Module):
         # init canonical gausssian model
         self.max_sh_degree = 0
         self.cano_gaussian_model = GaussianModel(sh_degree = self.max_sh_degree)
-        cano_smpl_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}_rot/cano_smpl_pos_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
+
+        cano_smpl_map = cv.imread(self.pos_map_dir + '/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
         self.cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
         # changeable target region
         self.bounding_mask = self.gen_bounding_mask()
@@ -73,7 +83,7 @@ class AvatarNet(nn.Module):
         self.cano_pos_map = torch.concatenate([self.cano_smpl_map[:, :cano_pos_map_size], self.cano_smpl_map[:, cano_pos_map_size:]], 2)
         self.cano_pos_map = self.cano_pos_map.permute((2, 0, 1))
 
-        self.lbs = torch.from_numpy(np.load(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}_rot/init_pts_lbs.npy'.format(self.map_size))).to(torch.float32).to(config.device)
+        self.lbs = torch.from_numpy(np.load(self.pos_map_dir + '/init_pts_lbs.npy')).to(torch.float32).to(config.device)
 
         self.color_net = DualStyleUNet(inp_size = self.map_size // 2, inp_ch = 3, out_ch = 3, out_size = self.map_size, style_dim = self.map_size // 2, n_mlp = 2)
         self.properties = 1 + 3 + 4
@@ -88,7 +98,7 @@ class AvatarNet(nn.Module):
             self.skinning_net = get_skinning_mlp(3, 55+4, config.opt['model']['skinning_network'])
 
         if self.with_viewdirs:
-            cano_nml_map = cv.imread(config.opt['train']['data']['data_dir'] + '/smpl_pos_map_{}_rot/cano_smpl_nml_map.exr'.format(self.map_size), cv.IMREAD_UNCHANGED)
+            cano_nml_map = cv.imread(self.pos_map_dir + '/cano_smpl_nml_map.exr', cv.IMREAD_UNCHANGED)
             self.cano_nml_map = torch.from_numpy(cano_nml_map).to(torch.float32).to(config.device)
             self.cano_nmls = self.cano_nml_map[self.bounding_mask]
             self.viewdir_net = nn.Sequential(
@@ -119,7 +129,7 @@ class AvatarNet(nn.Module):
         self.back_camera = get_orthographic_camera(back_mv, self.map_size, self.map_size, cano_center.device)
 
         # for root finding
-        self.cano_weight_volume = CanoBlendWeightVolume(config.opt['train']['data']['data_dir'] + '/cano_weight_volume_rot.npz')
+        self.cano_weight_volume = CanoBlendWeightVolume(self.cano_weight_volume_dir)
         if self.opt.get('volume_type', 'diff') == 'diff':
             self.weight_volume = self.cano_weight_volume.diff_weight_volume[0].permute(1, 2, 3, 0).contiguous()
         else:
@@ -137,7 +147,7 @@ class AvatarNet(nn.Module):
         self.hand_mask = torch.logical_or(self.hand_mask, lbs_argmax == 21)
         self.hand_mask = torch.logical_or(self.hand_mask, lbs_argmax >= 25)
 
-        pose_map_paths = sorted(glob.glob(config.opt['train']['data']['data_dir'] + "/smpl_pos_map_{}_rot/{:08d}.exr".format(self.map_size, config.opt['test']['fix_hand_id'])))
+        pose_map_paths = sorted(glob.glob(self.pos_map_dir + "/{:08d}.exr".format(config.opt['test']['fix_hand_id'])))
         smpl_pos_map = cv.imread(pose_map_paths[0], cv.IMREAD_UNCHANGED)
         pos_map_size = smpl_pos_map.shape[1] // 2
         smpl_pos_map = np.concatenate([smpl_pos_map[:, :pos_map_size], smpl_pos_map[:, pos_map_size:]], 2)
