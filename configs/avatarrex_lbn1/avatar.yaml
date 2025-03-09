@@ -1,4 +1,5 @@
 mode: train
+wandb_disable: false
 train:
   dataset: MvRgbDatasetAvatarReX
   data:

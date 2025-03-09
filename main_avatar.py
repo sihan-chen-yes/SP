@@ -33,7 +33,8 @@ from pytorch3d.renderer import (
 )
 from utils.graphics_utils import get_orthographic_camera, depth_map_to_pos_map
 from utils.losses import chamfer_loss, bound_loss, depth_map_smooth_loss, full_aiap_loss, binary_cross_entropy
-import yaml
+import wandb
+
 def safe_exists(path):
     if path is None:
         return False
@@ -463,15 +464,18 @@ class AvatarTrainer:
 
                 if self.iter_idx % smooth_interval == 0:
                     log_info = 'epoch %d, batch %d, iter %d ' % (epoch_idx, batch_idx, self.iter_idx)
+                    wandb_loss = {}
                     for key in smooth_losses.keys():
                         smooth_losses[key] /= smooth_count
                         writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
                         log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
-                        smooth_losses[key] = 0.
+                        wandb_loss.update({ 'pretrain_loss/loss_' + key: smooth_losses[key]})
+                    smooth_losses = {}
                     smooth_count = 0
                     print(log_info)
                     with open(os.path.join(log_dir, 'loss.txt'), 'a') as fp:
                         fp.write(log_info + '\n')
+                    wandb.log(wandb_loss, step=self.iter_idx)
 
                 if self.iter_idx % 200 == 0 and self.iter_idx != 0:
                     if self.iter_idx % (self.opt['train']['eval_interval']) == 0:
@@ -564,11 +568,13 @@ class AvatarTrainer:
                     smooth_count += 1
 
                     if self.iter_idx % smooth_interval == 0:
+                        wandb_loss = {}
                         log_info = 'epoch %d, batch %d, iter %d, lr %e, ' % (epoch_idx, batch_idx, self.iter_idx, lr)
                         for key in smooth_losses.keys():
                             smooth_losses[key] /= smooth_count
                             writer.add_scalar('%s/Iter' % key, smooth_losses[key], self.iter_idx)
                             log_info = log_info + ('%s: %f, ' % (key, smooth_losses[key]))
+                            wandb_loss.update({'train_loss/loss_' + key: smooth_losses[key]})
                             smooth_losses[key] = 0.
                         smooth_losses = {}
                         log_info += f'pts_num: {visibility_filter.shape[0]}, '
@@ -576,6 +582,7 @@ class AvatarTrainer:
                         print(log_info)
                         with open(os.path.join(log_dir, 'loss.txt'), 'a') as fp:
                             fp.write(log_info + '\n')
+                        wandb.log(wandb_loss, step=self.iter_idx)
                         torch.cuda.empty_cache()
 
                     if self.iter_idx % self.opt['train']['eval_interval'] == 0 and self.iter_idx != 0:
@@ -610,6 +617,7 @@ class AvatarTrainer:
     @torch.no_grad()
     def mini_test(self, pretraining = False, eval_cano_pts = False):
         self.avatar_net.eval()
+        wandb_imgs = {}
 
         img_factor = self.opt['train'].get('eval_img_factor', 1.0)
         # training data
@@ -686,6 +694,9 @@ class AvatarTrainer:
             rgb_map = np.concatenate([rgb_map, gt_image], 1)
         os.makedirs(output_dir, exist_ok = True)
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
+        # wandb assuming rgb
+        wandb_imgs.update({'test': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
+
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
             visualize_util.save_ply_w_pts_w(output_dir + '/cano_pts/iter_%d.ply' % self.iter_idx, gs_render["cano_pts"].cpu().numpy(), gs_render["cano_pts_w"].cpu().numpy())
@@ -706,10 +717,18 @@ class AvatarTrainer:
 
         os.makedirs(output_dir + '/inverse', exist_ok=True)
         cv.imwrite(output_dir + '/inverse/inverse_opacity_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_opacity_map"].cpu().numpy())
+        # wandb
+        wandb_imgs.update({'predicted_mask': wandb.Image(predicted_mask_map, caption='iter_%d' % self.iter_idx)})
+
+        wandb_imgs.update({'inverse_opacity_map': wandb.Image(gs_render["inverse_opacity_map"].cpu().numpy(), caption='iter_%d' % self.iter_idx)})
+
+        wandb.log(wandb_imgs, step=self.iter_idx)
+        wandb_imgs.clear()
+
         cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_depth_map"].cpu().numpy())
-        depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
-        os.makedirs(output_dir + '/train', exist_ok=True)
-        cv.imwrite(output_dir + '/train/depth_map_iter_%d.jpg' % self.iter_idx, depth_map)
+        # depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
+        # os.makedirs(output_dir + '/train', exist_ok=True)
+        # cv.imwrite(output_dir + '/train/depth_map_iter_%d.jpg' % self.iter_idx, depth_map)
 
         self.avatar_net.train()
 
@@ -776,6 +795,7 @@ class AvatarTrainer:
             self.avatar_net.generate_mean_hands()
         log_time = False
 
+        wandb_imgs = {}
         for idx in tqdm(range(data_num), desc = 'Rendering avatars...'):
             if log_time:
                 time_start.record()
@@ -902,6 +922,7 @@ class AvatarTrainer:
                 skel_img = geo_renderer.render()[0][:, :, :3]
                 skel_img = (skel_img * 255).astype(np.uint8)
                 cv.imwrite(output_dir + '/live_skeleton/%08d.jpg' % item['data_idx'], skel_img)
+                wandb_imgs.update({'live_skeleton': wandb.Image(cv.cvtColor(skel_img, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
 
             if log_time:
                 time_end.record()
@@ -942,13 +963,14 @@ class AvatarTrainer:
             rgb_map.clip_(0., 1.)
             rgb_map = (rgb_map * 255).to(torch.uint8).cpu().numpy()
             cv.imwrite(output_dir + '/rgb_map/%08d.jpg' % item['data_idx'], rgb_map)
-
+            wandb_imgs.update({'rgb_map': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
             if 'mask_map' in output:
                 os.makedirs(output_dir + '/mask_map', exist_ok = True)
                 mask_map = output['mask_map'][:, :, 0]
                 mask_map.clip_(0., 1.)
                 mask_map = (mask_map * 255).to(torch.uint8)
                 cv.imwrite(output_dir + '/mask_map/%08d.png' % item['data_idx'], mask_map.cpu().numpy())
+                wandb_imgs.update({'mask_map': wandb.Image(mask_map.cpu().numpy(), caption='iter_%d' % self.iter_idx)})
 
             if self.opt['test'].get('save_tex_map', False):
                 os.makedirs(output_dir + '/cano_tex_map', exist_ok = True)
@@ -956,6 +978,7 @@ class AvatarTrainer:
                 cano_tex_map.clip_(0., 1.)
                 cano_tex_map = (cano_tex_map * 255).to(torch.uint8)
                 cv.imwrite(output_dir + '/cano_tex_map/%08d.jpg' % item['data_idx'], cano_tex_map.cpu().numpy())
+                wandb_imgs.update({'cano_tex_map': wandb.Image(cv.cvtColor(cano_tex_map.cpu().numpy(), cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
 
             if self.opt['test'].get('save_ply', False):
                 save_gaussians_as_ply(output_dir + '/posed_gaussians/%08d.ply' % item['data_idx'], output['posed_gaussians'])
@@ -966,6 +989,8 @@ class AvatarTrainer:
                 print('Saving images costs %.4f secs' % (time_start.elapsed_time(time_end) / 1000.))
                 print('Animating one frame costs %.4f secs' % (time_start_all.elapsed_time(time_end) / 1000.))
 
+            wandb.log(wandb_imgs)
+            wandb_imgs.clear()
             torch.cuda.empty_cache()
 
     def save_ckpt(self, path, save_optm = True):
@@ -1023,15 +1048,28 @@ if __name__ == '__main__':
         config.opt['mode'] = args.mode
     if args.exp is not None:
         config.opt["train"]["exp"] = args.exp
+        config.opt['test']['exp'] = args.exp
+        config.opt['train']['net_ckpt_dir'] = f'./results/{config.opt["train"]["data"]["subject_name"]}/{config.opt["train"]["exp"]}'
+
+    # set wandb logger
+    wandb_name = args.exp if config.opt['mode'] == 'train' else f"{args.exp}_test"
+    wandb.init(
+        mode="disabled" if config.opt["wandb_disable"] else None,
+        name=wandb_name,
+        entity='digital-human-s24',
+        project="AG",
+        dir=config.opt['train']['net_ckpt_dir'],
+        config=config.opt,
+        settings=wandb.Settings(start_method='fork'),
+    )
 
     trainer = AvatarTrainer(config.opt)
     if config.opt['mode'] == 'train':
         # set training results directory
-        config.opt['train']['net_ckpt_dir'] = f'./results/{config.opt["train"]["data"]["subject_name"]}/{config.opt["train"]["exp"]}'
         timestamp = datetime.datetime.now()
         log_dir = config.opt['train']['net_ckpt_dir'] + '/' + timestamp.strftime('config_%Y_%m_%d_%H_%M_%S')
         writer = SummaryWriter(log_dir)
-
+        # dump config
         print(yaml.safe_dump(config.opt, sort_keys=False))
         with open(os.path.join(log_dir, 'config.txt'), 'a') as fp:
             fp.write(yaml.safe_dump(config.opt, sort_keys=False) + '\n')
@@ -1043,7 +1081,6 @@ if __name__ == '__main__':
             trainer.pretrain(timestamp=timestamp)
         trainer.train(timestamp=timestamp)
     elif config.opt['mode'] == 'test':
-        config.opt['test']['exp'] = args.exp
         trainer.test()
     else:
         raise NotImplementedError('Invalid running mode!')
