@@ -2,6 +2,7 @@ mode: train
 train:
   dataset: MvRgbDatasetAvatarReX
   data:
+    rot: true
     map_size: 512
     subject_name: avatarrex_lbn1
     data_dir: ../avatarrex/lbn1
