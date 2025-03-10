@@ -75,7 +75,7 @@ test:
   save_tex_map: false
   save_ply: false
   fix_hand: true
-  filtering_gaussians: true
+  filtering_gaussians: false
   fix_hand_id: 55
   n_pca: 20
   sigma_pca: 2.0
