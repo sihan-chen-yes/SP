@@ -32,8 +32,8 @@ train:
     mask: 0.1
     opaque: 0.1
     predicted_depth: 0.1
-    opacity: 0.1
-    opacity_symmetric: 0.003
+    opacity: 0.0
+    opacity_symmetric: 0.0
     scale: 0.01
     skinning_weight: 0.1
     inverse_cano_pts: 0.0
@@ -47,7 +47,7 @@ train:
     opacity:
       end: 10000
     inverse_opacity_map:
-      start: 30000
+      start: 0
   finetune_color: false
   batch_size: 1
   num_workers: 8
