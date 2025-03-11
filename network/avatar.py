@@ -81,6 +81,11 @@ class AvatarNet(nn.Module):
         # depth and xy nr offset
         self.offset_net = DualStyleUNet(inp_size =self.map_size // 2, inp_ch = 3, out_ch =1 + 2, out_size = self.map_size, style_dim =self.map_size // 2, n_mlp = 2)
 
+        # optimizable base tensor
+        self._base_opacity_raw = nn.Parameter(self.cano_gaussian_model.get_opacity_raw.requires_grad_(True))
+        self._base_scale_raw = nn.Parameter(self.cano_gaussian_model.get_scaling_raw.requires_grad_(True))
+        self._base_rotation_raw = nn.Parameter(self.cano_gaussian_model.get_rotation_raw.requires_grad_(True))
+
         self.color_style = torch.ones([1, self.color_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.color_net.style_dim)
         self.other_style = torch.ones([1, self.other_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.other_net.style_dim)
         self.offset_style = torch.ones([1, self.offset_net.style_dim], dtype=torch.float32, device=config.device) / np.sqrt(self.offset_net.style_dim)
@@ -259,9 +264,9 @@ class AvatarNet(nn.Module):
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
         # direct prediction
         # easier to change adaptively for opacity, and better initialization
-        opacity = self.cano_gaussian_model.opacity_activation(self.opacity_intensity * opacity)
-        scales = self.cano_gaussian_model.scaling_activation(scales + self.cano_gaussian_model.get_scaling_raw)
-        rotations = self.cano_gaussian_model.rotation_activation(rotations + self.cano_gaussian_model.get_rotation_raw)
+        opacity = self.cano_gaussian_model.opacity_activation(opacity * self.opacity_intensity + self._base_opacity_raw)
+        scales = self.cano_gaussian_model.scaling_activation(scales + self._base_scale_raw)
+        rotations = self.cano_gaussian_model.rotation_activation(rotations + self._base_rotation_raw)
         # opacity_map
         opacity_map = opacity.reshape(height, width)
         if return_map:
