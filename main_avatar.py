@@ -26,7 +26,7 @@ from utils.renderer import Renderer
 from utils.net_util import to_cuda
 from utils.obj_io import save_mesh_as_ply
 from gaussians.obj_io import save_gaussians_as_ply
-from utils.visualize_util import colormap
+from utils.visualize_util import colormap, depth_to_colormap
 from utils.renderer.renderer_pytorch3d import Renderer
 from pytorch3d.renderer import (
     OrthographicCameras,
@@ -695,8 +695,6 @@ class AvatarTrainer:
             rgb_map = np.concatenate([rgb_map, gt_image], 1)
         os.makedirs(output_dir, exist_ok = True)
         cv.imwrite(output_dir + '/iter_%d.jpg' % self.iter_idx, rgb_map)
-        # wandb assuming rgb
-        wandb_imgs.update({'test': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
 
         if eval_cano_pts:
             os.makedirs(output_dir + '/cano_pts', exist_ok = True)
@@ -711,25 +709,31 @@ class AvatarTrainer:
         # export mask
         predicted_mask_map = gs_render["predicted_mask"].cpu().numpy()
         predicted_depth_map = gs_render["predicted_depth_map"].cpu().numpy()
+        inverse_depth_map = gs_render["inverse_depth_map"].cpu().numpy()
 
+        colored_depth_map = depth_to_colormap(predicted_depth_map)
+        colored_inverse_depth_map = depth_to_colormap(inverse_depth_map)
         os.makedirs(output_dir + '/predicted', exist_ok=True)
         cv.imwrite(output_dir + '/predicted/predicted_mask_iter_%d.exr' % self.iter_idx, predicted_mask_map)
-        cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.exr' % self.iter_idx, predicted_depth_map)
+        cv.imwrite(output_dir + '/predicted/predicted_depth_map_iter_%d.jpg' % self.iter_idx, cv.cvtColor(colored_depth_map, cv.COLOR_RGB2BGR))
 
         os.makedirs(output_dir + '/inverse', exist_ok=True)
         cv.imwrite(output_dir + '/inverse/inverse_opacity_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_opacity_map"].cpu().numpy())
-        # wandb
-        wandb_imgs.update({'predicted_mask': wandb.Image(predicted_mask_map, caption='iter_%d' % self.iter_idx)})
 
-        wandb_imgs.update({'inverse_opacity_map': wandb.Image(gs_render["inverse_opacity_map"].cpu().numpy(), caption='iter_%d' % self.iter_idx)})
-
-        wandb.log(wandb_imgs, step=self.iter_idx)
-
-        cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_depth_map"].cpu().numpy())
+        cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.jpg' % self.iter_idx, cv.cvtColor(colored_inverse_depth_map, cv.COLOR_RGB2BGR))
         # depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
         # os.makedirs(output_dir + '/train', exist_ok=True)
         # cv.imwrite(output_dir + '/train/depth_map_iter_%d.jpg' % self.iter_idx, depth_map)
 
+        # wandb
+        prefix = "pretrain" if pretraining else "train"
+        # wandb assuming rgb
+        wandb_imgs.update({prefix + '/rgb_test': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB))})
+        wandb_imgs.update({prefix + '/predicted_mask': wandb.Image(predicted_mask_map)})
+        wandb_imgs.update({prefix + '/predicted_depth_map': wandb.Image(colored_depth_map)})
+        wandb_imgs.update({prefix + '/inverse_opacity_map': wandb.Image(gs_render["inverse_opacity_map"].cpu().numpy())})
+        wandb_imgs.update({prefix + '/inverse_depth_map': wandb.Image(colored_inverse_depth_map)})
+        wandb.log(wandb_imgs, step=self.iter_idx)
         self.avatar_net.train()
 
     @torch.no_grad()
@@ -922,7 +926,7 @@ class AvatarTrainer:
                 skel_img = geo_renderer.render()[0][:, :, :3]
                 skel_img = (skel_img * 255).astype(np.uint8)
                 cv.imwrite(output_dir + '/live_skeleton/%08d.jpg' % item['data_idx'], skel_img)
-                wandb_imgs.update({'live_skeleton': wandb.Image(cv.cvtColor(skel_img, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
+                wandb_imgs.update({'live_skeleton': wandb.Image(cv.cvtColor(skel_img, cv.COLOR_BGR2RGB))})
 
             if log_time:
                 time_end.record()
@@ -963,14 +967,14 @@ class AvatarTrainer:
             rgb_map.clip_(0., 1.)
             rgb_map = (rgb_map * 255).to(torch.uint8).cpu().numpy()
             cv.imwrite(output_dir + '/rgb_map/%08d.jpg' % item['data_idx'], rgb_map)
-            wandb_imgs.update({'rgb_map': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
+            wandb_imgs.update({'rgb_map': wandb.Image(cv.cvtColor(rgb_map, cv.COLOR_BGR2RGB))})
             if 'mask_map' in output:
                 os.makedirs(output_dir + '/mask_map', exist_ok = True)
                 mask_map = output['mask_map'][:, :, 0]
                 mask_map.clip_(0., 1.)
                 mask_map = (mask_map * 255).to(torch.uint8)
                 cv.imwrite(output_dir + '/mask_map/%08d.png' % item['data_idx'], mask_map.cpu().numpy())
-                wandb_imgs.update({'mask_map': wandb.Image(mask_map.cpu().numpy(), caption='iter_%d' % self.iter_idx)})
+                wandb_imgs.update({'mask_map': wandb.Image(mask_map.cpu().numpy())})
 
             if self.opt['test'].get('save_tex_map', False):
                 os.makedirs(output_dir + '/cano_tex_map', exist_ok = True)
@@ -978,7 +982,7 @@ class AvatarTrainer:
                 cano_tex_map.clip_(0., 1.)
                 cano_tex_map = (cano_tex_map * 255).to(torch.uint8)
                 cv.imwrite(output_dir + '/cano_tex_map/%08d.jpg' % item['data_idx'], cano_tex_map.cpu().numpy())
-                wandb_imgs.update({'cano_tex_map': wandb.Image(cv.cvtColor(cano_tex_map.cpu().numpy(), cv.COLOR_BGR2RGB), caption='iter_%d' % self.iter_idx)})
+                wandb_imgs.update({'cano_tex_map': wandb.Image(cv.cvtColor(cano_tex_map.cpu().numpy(), cv.COLOR_BGR2RGB))})
 
             if self.opt['test'].get('save_ply', False):
                 save_gaussians_as_ply(output_dir + '/posed_gaussians/%08d.ply' % item['data_idx'], output['posed_gaussians'])
@@ -1062,7 +1066,7 @@ if __name__ == '__main__':
         project="AG",
         dir=config.opt['train']['net_ckpt_dir'],
         config=config.opt,
-        settings=wandb.Settings(start_method='fork'),
+        settings=wandb.Settings(start_method='fork', strict=False),
     )
 
     trainer = AvatarTrainer(config.opt)
