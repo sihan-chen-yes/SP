@@ -61,7 +61,7 @@ class AvatarTrainer:
             {'params': [self.avatar_net._base_opacity_raw,
                         self.avatar_net._base_scale_raw,
                         self.avatar_net._base_rotation_raw],
-             'lr': self.lr_init * 0.1}, # lower init lr for base
+             'lr': self.lr_init * 10}, # lower init lr for base
 
             {'params': [p for n, p in self.avatar_net.named_parameters()
                         if n not in ['_base_opacity_raw', '_base_scale_raw', '_base_rotation_raw']],
