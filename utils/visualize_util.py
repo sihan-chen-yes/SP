@@ -250,3 +250,14 @@ def save_ply_w_pts_w(file_path, pts, pts_w):
     point_cloud.colors = vertex_colors
 
     point_cloud.export(file_path)
+
+def depth_to_colormap(depth, cmap='plasma'):
+    # normalization
+    depth_norm = (depth - np.min(depth)) / (np.max(depth) - np.min(depth))
+
+    colormap = plt.get_cmap(cmap)
+    colored_depth = colormap(depth_norm)[:, :, :3]
+
+    colored_depth = (colored_depth * 255).astype(np.uint8)
+
+    return colored_depth
