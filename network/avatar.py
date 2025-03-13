@@ -264,7 +264,7 @@ class AvatarNet(nn.Module):
         opacity, scales, rotations = torch.split(others, [1, 3, 4], 1)
         # direct prediction
         # easier to change adaptively for opacity, and better initialization
-        opacity = self.cano_gaussian_model.opacity_activation(opacity + self._base_opacity_raw)
+        opacity = self.cano_gaussian_model.opacity_activation(opacity * self.opacity_intensity + self._base_opacity_raw)
         scales = self.cano_gaussian_model.scaling_activation(scales + self._base_scale_raw)
         rotations = self.cano_gaussian_model.rotation_activation(rotations + self._base_rotation_raw)
         # opacity_map
