@@ -610,6 +610,7 @@ class AvatarTrainer:
 
                     if self.iter_idx == self.iter_num or self.iter_idx == self.opt['train']['train_iters']:
                         print(f'# Training is done: {self.opt["train"]["train_iters"]}')
+                        wandb.finish()
                         return
 
                     self.iter_idx += 1
@@ -734,7 +735,6 @@ class AvatarTrainer:
         wandb_imgs.update({'inverse_opacity_map': wandb.Image(gs_render["inverse_opacity_map"].cpu().numpy(), caption='iter_%d' % self.iter_idx)})
 
         wandb.log(wandb_imgs, step=self.iter_idx)
-        wandb_imgs.clear()
 
         cv.imwrite(output_dir + '/inverse/inverse_depth_map_iter_%d.exr' % self.iter_idx, gs_render["inverse_depth_map"].cpu().numpy())
         # depth_map = colormap(gs_render["depth_map"].cpu()).numpy()
@@ -1003,6 +1003,8 @@ class AvatarTrainer:
             wandb.log(wandb_imgs)
             wandb_imgs.clear()
             torch.cuda.empty_cache()
+
+        wandb.finish()
 
     def save_ckpt(self, path, save_optm = True):
         os.makedirs(path, exist_ok = True)
