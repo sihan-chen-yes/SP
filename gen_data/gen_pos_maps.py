@@ -40,10 +40,10 @@ def interpolate_lbs(pts, vertices, faces, vertex_lbs):
     )
     return lbs[0].cpu().numpy()
 
-def gen_depth_map(data_dir, height=1024, width=1024):
+def gen_depth_map(pos_map_dir, depth_map_dir, pc_dir, height=1024, width=1024):
     # create pts from pose map
     # init canonical gausssian model
-    cano_smpl_map = cv.imread(data_dir + '/smpl_pos_map_{}/cano_smpl_pos_map.exr'.format(map_size), cv.IMREAD_UNCHANGED)
+    cano_smpl_map = cv.imread(pos_map_dir + '/cano_smpl_pos_map.exr', cv.IMREAD_UNCHANGED)
     cano_smpl_map = torch.from_numpy(cano_smpl_map).to(torch.float32).to(config.device)
     cano_smpl_mask = torch.linalg.norm(cano_smpl_map, dim = -1) > 0.
     cano_init_points = cano_smpl_map[cano_smpl_mask]
@@ -57,39 +57,16 @@ def gen_depth_map(data_dir, height=1024, width=1024):
         mask = cano_smpl_depth_map > 0
 
         position = depth_map_to_pos_map(cano_smpl_depth_map, mask, front_camera=front_camera, back_camera=back_camera)
-        os.makedirs(data_dir + '/smpl_depth_map_{}'.format(map_size), exist_ok=True)
         # save depth map from canonical template
-        cv.imwrite(data_dir + '/smpl_depth_map_{}/cano_smpl_depth_map_pts_based.exr'.format(map_size), cano_smpl_depth_map.cpu().numpy())
+        cv.imwrite(depth_map_dir + '/cano_smpl_depth_map_pts_based.exr', cano_smpl_depth_map.cpu().numpy())
 
-        os.makedirs(data_dir + '/smpl_pc', exist_ok=True)
+        os.makedirs(pc_dir, exist_ok=True)
         # save ply canonical template
-        save_mesh_as_ply(data_dir + '/smpl_pc/cano_smpl.ply', position.cpu().numpy())
-
-    if os.path.exists(data_dir + '/smpl_pos_map_template_{}/cano_smpl_pos_map.exr'.format(map_size)):
-        cano_template_map = cv.imread(data_dir + '/smpl_pos_map_template_{}/cano_smpl_pos_map.exr'.format(map_size), cv.IMREAD_UNCHANGED)
-        cano_template_map = torch.from_numpy(cano_template_map).to(torch.float32).to(config.device)
-        cano_template_mask = torch.linalg.norm(cano_template_map, dim = -1) > 0.
-        cano_template_init_points = cano_template_map[cano_template_mask]
-
-        # get orthographic projected depth map using pts in canonical space
-        with torch.no_grad():
-            cano_template_depth_map = get_orthographic_depth_map(cano_template_init_points, front_camera, back_camera)
-
-            # unproject depth back to position
-            mask = cano_template_depth_map > 0
-
-            position = depth_map_to_pos_map(cano_template_depth_map, mask, front_camera=front_camera, back_camera=back_camera)
-            os.makedirs(data_dir + '/smpl_depth_map_template_{}'.format(map_size), exist_ok=True)
-            # save depth map from canonical template
-            cv.imwrite(data_dir + '/smpl_depth_map_template_{}/cano_smpl_depth_map_pts_based.exr'.format(map_size), cano_template_depth_map.cpu().numpy())
-
-            os.makedirs(data_dir + '/smpl_pc_template', exist_ok=True)
-            # save ply canonical template
-            save_mesh_as_ply(data_dir + '/smpl_pc_template/cano_smpl.ply', position.cpu().numpy())
+        save_mesh_as_ply(pc_dir + '/cano_smpl.ply', position.cpu().numpy())
 
 # 1. 1024 2. 512
 map_size = 512
-
+template = True
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
@@ -105,8 +82,11 @@ if __name__ == '__main__':
     dataset = MvRgbDataset(**opt['train']['data'])
     data_dir, frame_list = dataset.data_dir, dataset.pose_list
 
-    os.makedirs(data_dir + '/smpl_pos_map_{}'.format(map_size), exist_ok = True)
-    os.makedirs(data_dir + '/smpl_depth_map_{}'.format(map_size), exist_ok = True)
+    pos_map_dir = data_dir + ('/smpl_pos_map_{}_smpl'.format(map_size) if not template else '/smpl_pos_map_{}_template'.format(map_size))
+    os.makedirs(pos_map_dir, exist_ok = True)
+    depth_map_dir = data_dir + ('/smpl_depth_map_{}_smpl'.format(map_size) if not template else '/smpl_depth_map_{}_template'.format(map_size))
+    os.makedirs(depth_map_dir, exist_ok = True)
+    pc_dir = data_dir + ('/pc_smpl' if not template else '/pc_template')
 
     cano_renderer = Renderer(map_size, map_size, shader_name = 'vertex_attribute')
 
@@ -126,7 +106,7 @@ if __name__ == '__main__':
         cano_smpl_v_min = cano_smpl_v.min()
         smpl_faces = smpl_model.faces.astype(np.int64)
 
-    if os.path.exists(data_dir + '/template.ply'):
+    if os.path.exists(data_dir + '/template.ply') and template:
         print('# Loading template from %s' % (data_dir + '/template.ply'))
         template = trimesh.load(data_dir + '/template.ply', process = False)
         using_template = True
@@ -166,11 +146,13 @@ if __name__ == '__main__':
     # cano_depth_map_normalized = (cano_depth_map - cano_depth_map.min()) / (cano_depth_map.max() - cano_depth_map.min())
     cano_depth_map_visual = colormap(cano_depth_map).numpy()
 
-    cv.imwrite(data_dir + '/smpl_pos_map_{}/cano_smpl_pos_map.exr'.format(map_size), cano_pos_map)
-    cv.imwrite(data_dir + '/smpl_depth_map_{}/cano_smpl_depth_map_mesh_based.exr'.format(map_size), cano_depth_map)
+    cv.imwrite(pos_map_dir + '/cano_smpl_pos_map.exr', cano_pos_map)
+    cv.imwrite(depth_map_dir + '/cano_smpl_depth_map_mesh_based.exr', cano_depth_map)
     print("generated mesh based depth map")
-    # cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map_normalized.exr', cano_depth_map_normalized)
-    # cv.imwrite(data_dir + '/smpl_depth_map/cano_smpl_depth_map_visual.exr', cano_depth_map_visual)
+
+    # gen point based depth map
+    gen_depth_map(pos_map_dir, depth_map_dir, pc_dir, width=map_size, height=map_size)
+    print("generated pts based depth map")
 
     # render canonical smpl normal maps
     cano_renderer.set_model(cano_smpl_v_dup, cano_smpl_n_dup)
@@ -180,7 +162,7 @@ if __name__ == '__main__':
     cano_renderer.set_camera(back_mv)
     back_cano_nml_map = cano_renderer.render()[0][:, :, :3]
     cano_nml_map = np.concatenate([front_cano_nml_map, back_cano_nml_map], 1)
-    cv.imwrite(data_dir + '/smpl_pos_map_{}/cano_smpl_nml_map.exr'.format(map_size), cano_nml_map)
+    cv.imwrite(pos_map_dir + '/cano_smpl_nml_map.exr', cano_nml_map)
 
     body_mask = np.linalg.norm(cano_pos_map, axis = -1) > 0.
     cano_pts = cano_pos_map[body_mask]
@@ -190,7 +172,7 @@ if __name__ == '__main__':
     else:
         pts_lbs = interpolate_lbs(cano_pts, cano_smpl_v, smpl_faces, smpl_model.lbs_weights)
         pts_lbs = torch.from_numpy(pts_lbs).cuda()
-    np.save(data_dir + '/smpl_pos_map_{}/init_pts_lbs.npy'.format(map_size), pts_lbs.cpu().numpy())
+    np.save(pos_map_dir + '/init_pts_lbs.npy', pts_lbs.cpu().numpy())
 
     inv_cano_smpl_A = torch.linalg.inv(cano_smpl.A).cuda()
     body_mask = torch.from_numpy(body_mask).cuda()
@@ -218,9 +200,4 @@ if __name__ == '__main__':
         live_pos_map[body_mask] = live_pts
         live_pos_map = F.interpolate(live_pos_map.permute(2, 0, 1)[None], None, [0.5, 0.5], mode = 'nearest')[0]
         live_pos_map = live_pos_map.permute(1, 2, 0).cpu().numpy()
-        cv.imwrite(data_dir + '/smpl_pos_map_{}/{:08d}.exr'.format(map_size, pose_idx), live_pos_map)
-
-    # gen point based depth map
-    gen_depth_map(data_dir, width=map_size, height=map_size)
-    print("generated pts based depth map")
-
+        cv.imwrite(pos_map_dir + '/{:08d}.exr'.format(pose_idx), live_pos_map)
