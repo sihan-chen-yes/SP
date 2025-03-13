@@ -46,7 +46,7 @@ class AvatarTrainer:
         self.opt = opt
         self.patch_size = 512
         self.iter_idx = 0
-        self.iter_num = 800000
+        self.iter_num = self.opt['train']['train_iters']
         self.lr_init = float(self.opt['train'].get('lr_init', 5e-4))
 
         avatar_module = self.opt['model'].get('module', 'network.avatar')
@@ -597,7 +597,7 @@ class AvatarTrainer:
                         os.makedirs(model_folder, exist_ok = True)
                         self.save_ckpt(model_folder, save_optm = True)
 
-                    if self.iter_idx == self.iter_num or self.iter_idx == self.opt['train']['train_iters']:
+                    if self.iter_idx == self.iter_num:
                         print(f'# Training is done: {self.opt["train"]["train_iters"]}')
                         wandb.finish()
                         return
