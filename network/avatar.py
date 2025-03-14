@@ -438,7 +438,9 @@ class AvatarNet(nn.Module):
         # pts -> depth map is not differentiable
         with torch.no_grad():
             inverse_depth_map = get_orthographic_depth_map(inverse_cano_pts_filtered, self.front_camera, self.back_camera)
-            inverse_opacity_map = (inverse_depth_map > 0.).to(torch.float32) * 0.9
+            mask = inverse_depth_map > 0.
+            inverse_depth_map[~mask] = 10.0
+            inverse_opacity_map = (mask).to(torch.float32) * 0.99
 
         # aiap loss
         # TODO scaling_modifier
